@@ -5,7 +5,6 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { analyzeTextForEvent } from '../services/geminiService';
 import type { CalendarEvent } from '../types';
 import Spinner from '../components/Spinner';
-import { CalendarIcon, SparklesIcon } from '../components/Icon';
 
 const EventCreator: React.FC = () => {
   const [text, setText] = useState('');
@@ -74,15 +73,14 @@ const EventCreator: React.FC = () => {
   return (
     <div className="h-full flex flex-col">
       <h2 className="text-xl font-semibold text-white mb-4 text-center">Create Event from Text</h2>
-      <p className="text-center text-gray-400 mb-6">Paste any text that contains event details, or select text on a webpage and right-click.</p>
       
-      <div className="flex-grow flex flex-col gap-6">
+      <div className="flex-grow flex flex-col gap-4">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="e.g., 'Team meeting tomorrow at 3 PM in the conference room to discuss Q3 results.'"
+          placeholder="Enter event details..."
           className="w-full flex-grow p-4 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none resize-none"
-          rows={6}
+          rows={8}
           disabled={loading}
         />
 
@@ -91,7 +89,7 @@ const EventCreator: React.FC = () => {
           disabled={loading || !text.trim()}
           className="w-full bg-purple-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
         >
-          {loading ? <Spinner /> : <><SparklesIcon className="w-5 h-5 mr-2" /> Analyze for Event</>}
+          {loading ? <Spinner /> : 'Create Event'}
         </button>
       </div>
 
@@ -118,7 +116,7 @@ const EventCreator: React.FC = () => {
             rel="noopener noreferrer"
             className="mt-6 inline-flex items-center justify-center w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-colors"
           >
-            <CalendarIcon className="w-5 h-5 mr-2" /> Add to Google Calendar
+            Add to Google Calendar
           </a>
         </div>
       )}

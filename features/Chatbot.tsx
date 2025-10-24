@@ -4,7 +4,6 @@ import { GoogleGenAI, Chat } from "@google/genai";
 import type { ChatMessage } from '../types';
 import ChatMessageComponent from '../components/ChatMessage';
 import Spinner from '../components/Spinner';
-import { SendIcon } from '../components/Icon';
 
 const Chatbot: React.FC = () => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -115,7 +114,7 @@ const Chatbot: React.FC = () => {
                     disabled={loading || !input.trim()}
                     className="bg-purple-600 text-white p-3 rounded-full hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center transition-colors flex-shrink-0"
                 >
-                    <SendIcon className="w-6 h-6" />
+                    Send
                 </button>
             </div>
         </div>

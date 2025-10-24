@@ -62,7 +62,7 @@ Text to analyze: "${text}"`;
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
             if (call.name === 'create_calendar_event') {
-                return call.args as CalendarEvent;
+                return call.args as unknown as CalendarEvent;
             }
         }
         return null;
@@ -72,37 +72,3 @@ Text to analyze: "${text}"`;
     }
 };
 
-export const analyzeImage = async (prompt: string, imageBase64: string, mimeType: string): Promise<string> => {
-    try {
-        const imagePart = {
-            inlineData: {
-                data: imageBase64,
-                mimeType,
-            },
-        };
-        const textPart = {
-            text: prompt,
-        };
-
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: defaultModel,
-            contents: { parts: [imagePart, textPart] },
-        });
-
-        return response.text;
-    } catch (error) {
-        console.error("Error analyzing image:", error);
-        throw new Error("Failed to analyze image. Please check the console for details.");
-    }
-};
-
-export const fileToGenerativePart = async (file: File) => {
-    const base64EncodedDataPromise = new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(file);
-    });
-    return {
-        inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
-    };
-};

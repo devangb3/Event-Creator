@@ -1,4 +1,4 @@
-export type TabId = 'event' | 'image';
+export type TabId = 'event';
 
 export interface CalendarEvent {
   title: string;
