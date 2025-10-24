@@ -1,98 +1,134 @@
 # Gemini Event Creator - Chrome Extension
 
-A Chrome extension that allows you to select text on any webpage and quickly create Google Calendar events using Google's Gemini AI.
+A lightweight Chrome extension that allows you to select text on any webpage and quickly create Google Calendar events using intelligent text parsing.
 
 ## Features
 
-- **Text Selection**: Right-click on any webpage to create calendar events from selected text
-- **AI-Powered**: Uses Google Gemini AI to intelligently parse event details
-- **Image Analysis**: Upload and analyze images with Gemini AI
-- **Modern UI**: Built with React and Tailwind CSS
+- **Text Selection**: Right-click on any selected text to create calendar events
+- **Smart Parsing**: Automatically extracts event details (date, time, location) from text
+- **Google Calendar Integration**: One-click calendar event creation
+- **Inline UI**: Appears as an overlay directly on the webpage (like Grammarly)
+- **Lightweight**: No external dependencies, pure vanilla JavaScript
 
-## Prerequisites
+## Quick Start
 
-- Node.js (v16 or higher)
-- Google Chrome browser
-- Gemini API key
+### 1. Get Gemini API Key
+1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+2. Create a new API key
+3. Copy the API key for configuration
 
-## Installation & Setup
+### 2. Configure API Key
+The extension will work with fallback parsing, but for AI-powered event extraction:
 
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Set Up Environment Variables
-Create a `.env.local` file in the project root:
-```bash
-echo "GEMINI_API_KEY=your_gemini_api_key_here" > .env.local
-```
-
-Replace `your_gemini_api_key_here` with your actual Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+1. **Option A: Through Extension Storage (Recommended)**
+   - Use the extension's built-in API key configuration
+   - The extension will prompt you to set the API key on first use
 
 ### 3. Build the Extension
 ```bash
 npm run build
 ```
 
-This will create a `dist/` folder with all the extension files.
+### 4. Load in Chrome
+1. Open Chrome and go to `chrome://extensions/`
+2. Enable "Developer mode" (top right toggle)
+3. Click "Load unpacked"
+4. Select the **`dist`** folder
+5. Extension is ready to use!
 
-### 4. Load Extension in Chrome
+## How to Use
 
-1. Open Google Chrome
-2. Navigate to `chrome://extensions/`
-3. Enable "Developer mode" (toggle in the top right)
-4. Click "Load unpacked"
-5. Select the **`dist`** folder from your project directory
-6. The extension should now appear in your extensions list
+1. **Select Text**: Highlight any text on a webpage that contains event information
+   - Example: "Meeting tomorrow at 3 PM in conference room A"
+   - Example: "Team lunch on Friday at noon"
 
-## Usage
+2. **Right-Click**: Right-click on the selected text
 
-1. **Create Calendar Events**:
-   - Select any text on a webpage
-   - Right-click and choose "Create Calendar Event with Gemini"
-   - The extension popup will open with the selected text
-   - Gemini AI will analyze the text and extract event details
+3. **Create Event**: Choose "Create Event from Text" from the context menu
 
-2. **Image Analysis**:
-   - Open the extension popup
-   - Switch to the "Image Analysis" tab
-   - Upload an image and ask questions about it
+4. **Modal Appears**: An overlay modal will appear on the same page
+
+5. **Review & Create**: Click "Create Event" to process the text
+
+6. **Add to Calendar**: Click "Add to Google Calendar" to add the event
 
 ## Development
 
-### Building for Development
+### Project Structure
+```
+├── manifest.json      # Extension configuration
+├── background.js      # Background script (context menu + text analysis)
+├── content.js         # Content script (injects UI into webpages)
+├── content.css        # Styles for the inline modal
+├── vite.config.js     # Build configuration
+└── dist/             # Built extension files
+```
+
+### Building
 ```bash
 npm run build
 ```
 
-### Development Notes
-- **Don't use `npm run dev`** for Chrome extensions - this causes MIME type issues
-- Always build the extension before loading it in Chrome
-- The extension uses local dependencies (no external CDNs) to comply with Chrome's Content Security Policy
+The built files will be in the `dist/` directory.
+
+### Key Files
+
+- **`background.js`**: Handles context menu creation and text analysis
+- **`content.js`**: Injects the event creation modal directly into webpages
+- **`content.css`**: Styles for the inline overlay modal
+- **`manifest.json`**: Extension permissions and configuration
+
+## Technical Details
+
+- **No React**: Built with vanilla JavaScript for maximum compatibility
+- **Content Scripts**: Uses `chrome.content_scripts` to inject UI into all websites
+- **Context Menus**: Integrates with Chrome's right-click menu system
+- **Message Passing**: Communication between background script and content scripts
+- **Inline Modal**: Appears as an overlay on the webpage (not a popup window)
 
 ## Troubleshooting
 
-### Common Issues
+### Extension Not Loading
+- Make sure you're loading the `dist/` folder, not the project root
+- Check that "Developer mode" is enabled in `chrome://extensions/`
+- Try refreshing the extension after rebuilding
 
-1. **MIME Type Errors**: Make sure you're loading the `dist/` folder, not the project root
-2. **API Key Errors**: Ensure your `.env.local` file has the correct `GEMINI_API_KEY`
-3. **CSP Violations**: The extension uses local dependencies only - no external CDNs
+### Context Menu Not Appearing
+- The context menu only appears when text is selected
+- Make sure you're right-clicking on selected text, not empty space
 
-### Rebuilding After Changes
-After making code changes, rebuild the extension:
-```bash
-npm run build
-```
-Then reload the extension in Chrome (click the refresh icon on the extension card).
+### Modal Not Appearing
+- Check the browser console for error messages
+- Ensure the content script is loading (check console logs)
+- Try refreshing the webpage
 
-## Project Structure
+## Permissions
 
-```
-├── components/          # React components
-├── features/           # Main feature components
-├── services/           # API services (Gemini integration)
-├── dist/              # Built extension files (after npm run build)
-├── manifest.json      # Chrome extension manifest
-└── vite.config.ts     # Vite configuration for extension building
-```
+The extension requests the following permissions:
+- `contextMenus`: To add the right-click menu option
+- `storage`: For saving preferences (if needed in future)
+- `activeTab`: To access the current tab
+- `host_permissions`: To run on all websites
+
+## Features
+
+### AI-Powered Event Extraction
+- **Gemini Integration**: Uses Google's Gemini AI for intelligent text analysis
+- **Smart Parsing**: Automatically extracts dates, times, locations, and event details
+- **Fallback Support**: Works with simple regex parsing if AI is unavailable
+- **Natural Language**: Understands complex event descriptions
+
+### Current Capabilities
+- Extract event titles from any text
+- Parse relative dates (tomorrow, next week, etc.)
+- Recognize time formats (3 PM, 15:00, etc.)
+- Identify locations and descriptions
+- Generate Google Calendar links
+
+## Future Enhancements
+
+- Support for recurring events
+- Event templates and quick actions
+- Multiple calendar providers
+- Event conflict detection
+- Team event coordination
