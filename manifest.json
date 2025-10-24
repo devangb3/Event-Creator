@@ -5,15 +5,19 @@
   "version": "1.0",
   "permissions": [
     "contextMenus",
-    "storage"
+    "storage",
+    "activeTab"
   ],
   "background": {
     "service_worker": "background.js"
   },
-  "action": {
-    "default_popup": "index.html",
-    "default_title": "Gemini Event Creator"
-  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }
