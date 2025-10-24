@@ -409,7 +409,7 @@ async function handleCreateEvent(text) {
           log('Auto-removing UI after timeout');
           eventCreatorContainer.remove();
         }
-      }, 10000);
+      }, 20000);
     } else {
       const errorMsg = (response && typeof response === 'object' && response.error) 
         ? response.error 
