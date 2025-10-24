@@ -1,25 +1,54 @@
+// Debug logging function
+function log(message, data = null) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] BACKGROUND: ${message}`, data || '');
+}
+
+// Log when background script starts
+log('Background script starting');
+log('Chrome runtime available:', {
+  onInstalled: !!chrome.runtime.onInstalled,
+  onMessage: !!chrome.runtime.onMessage,
+  contextMenus: !!chrome.contextMenus
+});
+
 // Creates a context menu item for selected text.
 chrome.runtime.onInstalled.addListener(() => {
+  log('Extension installed, creating context menu');
   chrome.contextMenus.create({
     id: 'gemini-create-event',
     title: 'Create Event from Text',
     contexts: ['selection'],
+  }, () => {
+    if (chrome.runtime.lastError) {
+      log('Error creating context menu:', chrome.runtime.lastError);
+    } else {
+      log('Context menu created successfully');
+    }
   });
 });
 
 // Listen for messages from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  log('Received message from content script:', { action: request.action, sender: sender.tab?.id });
+
   if (request.action === 'analyzeText') {
+    log('Processing analyzeText request:', { textLength: request.text?.length });
+
     analyzeTextForEvent(request.text)
       .then(result => {
+        log('Text analysis completed:', result);
         if (result) {
           const calendarUrl = generateCalendarLink(result);
+          log('Generated calendar URL:', calendarUrl);
           sendResponse({ success: true, calendarUrl });
         } else {
+          log('No event details found');
           sendResponse({ success: false, error: 'No event details found' });
         }
       })
       .catch(error => {
+        log('Error in text analysis:', error);
         sendResponse({ success: false, error: error.message });
       });
     return true; // Keep message channel open for async response
@@ -28,12 +57,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Listens for clicks on the context menu item.
 chrome.contextMenus.onClicked.addListener((info, tab) => {
+  log('Context menu clicked:', {
+    menuItemId: info.menuItemId,
+    selectionText: info.selectionText?.substring(0, 100),
+    tabId: tab?.id,
+    tabUrl: tab?.url
+  });
+
   if (info.menuItemId === 'gemini-create-event' && info.selectionText) {
+    if (!tab || !tab.id) {
+      log('ERROR: No valid tab found');
+      return;
+    }
+
+    log('Sending message to content script on tab:', tab.id);
+
     // Send message to content script to show the UI
     chrome.tabs.sendMessage(tab.id, {
       action: 'createEvent',
       text: info.selectionText
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        log('ERROR sending message to content script:', chrome.runtime.lastError);
+      } else {
+        log('Message sent successfully to content script');
+      }
     });
+  } else {
+    log('Context menu click ignored - missing selection or wrong menu item');
   }
 });
 
