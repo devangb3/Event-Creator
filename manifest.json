@@ -13,5 +13,8 @@
   "action": {
     "default_popup": "index.html",
     "default_title": "Gemini Event Creator"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
   }
 }
