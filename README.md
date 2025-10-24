@@ -13,14 +13,14 @@ A lightweight Chrome extension that allows you to select text on any webpage and
 ## Quick Start
 
 ### 1. Get Gemini API Key
-1. Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+1. Go to [Google AI Studio](https://aistudio.google.com/api-keys)
 2. Create a new API key
 3. Copy the API key for configuration
 
 ### 2. Configure API Key
 The extension will work with fallback parsing, but for AI-powered event extraction:
 
-1. **Option A: Through Extension Storage (Recommended)**
+ **Through Extension Storage (Recommended)**
    - Use the extension's built-in API key configuration
    - The extension will prompt you to set the API key on first use
 
@@ -52,39 +52,12 @@ npm run build
 
 6. **Add to Calendar**: Click "Add to Google Calendar" to add the event
 
-## Development
-
-### Project Structure
-```
-├── manifest.json      # Extension configuration
-├── background.js      # Background script (context menu + text analysis)
-├── content.js         # Content script (injects UI into webpages)
-├── content.css        # Styles for the inline modal
-├── vite.config.js     # Build configuration
-└── dist/             # Built extension files
-```
-
 ### Building
 ```bash
 npm run build
 ```
 
 The built files will be in the `dist/` directory.
-
-### Key Files
-
-- **`background.js`**: Handles context menu creation and text analysis
-- **`content.js`**: Injects the event creation modal directly into webpages
-- **`content.css`**: Styles for the inline overlay modal
-- **`manifest.json`**: Extension permissions and configuration
-
-## Technical Details
-
-- **No React**: Built with vanilla JavaScript for maximum compatibility
-- **Content Scripts**: Uses `chrome.content_scripts` to inject UI into all websites
-- **Context Menus**: Integrates with Chrome's right-click menu system
-- **Message Passing**: Communication between background script and content scripts
-- **Inline Modal**: Appears as an overlay on the webpage (not a popup window)
 
 ## Troubleshooting
 
@@ -109,21 +82,6 @@ The extension requests the following permissions:
 - `storage`: For saving preferences (if needed in future)
 - `activeTab`: To access the current tab
 - `host_permissions`: To run on all websites
-
-## Features
-
-### AI-Powered Event Extraction
-- **Gemini Integration**: Uses Google's Gemini AI for intelligent text analysis
-- **Smart Parsing**: Automatically extracts dates, times, locations, and event details
-- **Fallback Support**: Works with simple regex parsing if AI is unavailable
-- **Natural Language**: Understands complex event descriptions
-
-### Current Capabilities
-- Extract event titles from any text
-- Parse relative dates (tomorrow, next week, etc.)
-- Recognize time formats (3 PM, 15:00, etc.)
-- Identify locations and descriptions
-- Generate Google Calendar links
 
 ## Future Enhancements
 
