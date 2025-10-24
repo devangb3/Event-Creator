@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Multi-Tool",
+  "description": "An intelligent assistant powered by Gemini. Analyze text to create calendar events and get insights from your images.",
+  "requestFramePermissions": []
+}
