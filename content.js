@@ -1,104 +1,209 @@
-// Content script to inject the event creator UI into webpages
+// content.js
+
 let eventCreatorContainer = null;
 
-// Debug logging function
-function log(message, data = null) {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] CONTENT: ${message}`, data || '');
+function log(msg, data = null) {
+  const ts = new Date().toISOString();
+  if (data !== null) {
+    console.log(`[${ts}] CONTENT: ${msg}`, data);
+  } else {
+    console.log(`[${ts}] CONTENT: ${msg}`);
+  }
 }
 
-log('Content script starting to load');
+console.log(">>> CONTENT.JS ATTACHED <<<", window.location.href);
 
-log('Current URL:', window.location.href);
-log('Document ready state:', document.readyState);
-
+// OPTIONAL: background trigger support
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (!request || typeof request !== 'object') {
-    log('ERROR: Invalid request object received');
-    return false;
+  if (request?.action === "createEvent" && typeof request.text === "string") {
+    log("BG requested createEvent", { textPreview: request.text.slice(0, 80) });
+    showEventCreator(request.text);
+    sendResponse({ success: true });
+  } else {
+    sendResponse({ success: false, error: "Bad request or no text" });
   }
-
-  if (!sender || typeof sender !== 'object') {
-    log('ERROR: Invalid sender object received');
-    return false;
-  }
-
-  log('Received message from background:', {
-    action: request.action,
-    textLength: request.text?.length,
-    senderUrl: sender.tab?.url
-  });
-
-  if (request.action === 'createEvent') {
-    log('Creating event UI for text:', request.text?.substring(0, 100));
-
-    if (typeof request.text === 'string') {
-      showEventCreator(request.text);
-      sendResponse({ success: true });
-    } else {
-      log('Invalid text received for event creation');
-      sendResponse({ success: false, error: 'Invalid text selection' });
-    }
-  }
-
-  return true; // Keep message channel open
+  return true;
 });
 
-// Log when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    log('DOM content loaded');
-  });
-} else {
-  log('DOM already loaded');
-}
+// Listen for mouseup anywhere in the page
+document.addEventListener("mouseup", (e) => {
+  // If popup is already open AND mouseup happened inside it, do nothing
+  if (eventCreatorContainer && eventCreatorContainer.contains(e.target)) {
+    log("mouseup inside popup -> ignore");
+    return;
+  }
 
-// Log when everything is ready
-window.addEventListener('load', () => {
-  log('Page fully loaded');
+  const selectedText = window.getSelection().toString().trim();
+
+  log("document mouseup", {
+    textPreview: selectedText.slice(0, 80),
+    len: selectedText.length,
+  });
+
+  // Only trigger popup if real selection (>3 chars)
+  if (selectedText && selectedText.length > 3) {
+    showEventCreator(selectedText);
+  }
 });
 
-// Test if content script is working
-setTimeout(() => {
-  log('Content script is active and ready to receive messages');
-  log('Chrome runtime available:', !!chrome.runtime);
-  log('Chrome tabs available:', !!chrome.tabs);
-}, 1000);
+log(">>> mouseup listener attached");
 
-// Function to show the event creator UI
+// Build + show popup
 function showEventCreator(selectedText) {
-  log('showEventCreator called with text length:', selectedText?.length);
+  log("showEventCreator called", { textPreview: selectedText.slice(0, 80) });
 
-  // Remove existing UI if present
+  // clean existing popup
   if (eventCreatorContainer) {
-    log('Removing existing UI container');
     eventCreatorContainer.remove();
+    eventCreatorContainer = null;
   }
 
-  log('Creating new UI container');
+  eventCreatorContainer = document.createElement("div");
+  eventCreatorContainer.id = "gemini-event-creator";
 
-  // Create container for the UI
-  eventCreatorContainer = document.createElement('div');
-  eventCreatorContainer.id = 'gemini-event-creator';
+  // --- STYLE PALETTE ---
+  // Overlay: same dim background
+  // Card: subtle off-white / light gray body
+  // Header: slightly darker strip
+  // Button: neutral/dark button instead of bright blue
+  // Text box: soft gray background
+  //
+  // The goal is "tooling panel" vibe instead of "Google popup".
+  //
   eventCreatorContainer.innerHTML = `
-    <div class="event-creator-overlay">
-      <div class="event-creator-modal" role="dialog" aria-modal="true" aria-labelledby="eventCreatorTitle">
-        <div class="event-creator-header">
-          <h3 id="eventCreatorTitle">Event Creator</h3>
-          <button class="close-button" id="closeEventCreatorBtn" type="button" aria-label="Close event creator">×</button>
+    <div class="event-creator-overlay" style="
+      position:fixed;
+      inset:0;
+      z-index:999999;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:rgba(0,0,0,0.35);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    ">
+      <div class="event-creator-modal" role="dialog" aria-modal="true" style="
+        background:#f8f9fa;
+        max-width:360px;
+        width:90%;
+        border-radius:10px;
+        box-shadow:0 20px 48px rgba(0,0,0,0.35);
+        position:relative;
+        z-index:1000001;
+        border:1px solid rgba(0,0,0,0.08);
+        color:#1a1a1a;
+      ">
+        <div class="event-creator-header" style="
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          padding:12px 16px;
+          background:#eceff1;
+          border-bottom:1px solid rgba(0,0,0,0.07);
+          border-top-left-radius:10px;
+          border-top-right-radius:10px;
+        ">
+          <h3 style="
+            margin:0;
+            font-size:14px;
+            font-weight:600;
+            color:#1f2937;
+            letter-spacing:-0.02em;
+          ">Create Event</h3>
+
+          <button class="close-button" id="closeEventCreatorBtn" style="
+            border:none;
+            background:none;
+            font-size:16px;
+            line-height:16px;
+            cursor:pointer;
+            padding:4px 8px;
+            font-weight:600;
+            color:#4b5563;
+          ">×</button>
         </div>
-        <div class="event-creator-body">
-          <div class="selected-text-preview">
-            <p><strong>Selected text:</strong></p>
-            <p class="selected-text">${escapeHtml(selectedText)}</p>
+
+        <div class="event-creator-body" style="
+          padding:16px;
+          max-height:60vh;
+          overflow:auto;
+          font-size:13px;
+          line-height:1.4;
+          color:#1f2937;
+        ">
+
+          <div class="selected-text-preview" style="margin-bottom:14px;">
+            <p style="
+              margin:0 0 6px 0;
+              font-weight:600;
+              color:#111827;
+              font-size:12px;
+              letter-spacing:-0.02em;
+            ">Selected text</p>
+
+            <p class="selected-text" style="
+              margin:0;
+              background:#ffffff;
+              border:1px solid rgba(0,0,0,0.1);
+              border-radius:6px;
+              padding:8px;
+              font-size:12px;
+              line-height:1.4;
+              color:#374151;
+              white-space:pre-wrap;
+              box-shadow:0 1px 2px rgba(0,0,0,0.05);
+            ">${escapeHtml(selectedText)}</p>
           </div>
-          <button class="create-event-btn" id="createEventBtn">
+
+          <button class="create-event-btn" id="createEventBtn" style="
+            display:inline-block;
+            background:#111827;
+            color:#fff;
+            border:none;
+            border-radius:6px;
+            padding:8px 12px;
+            font-size:12px;
+            font-weight:500;
+            cursor:pointer;
+            line-height:1.2;
+            box-shadow:0 2px 4px rgba(0,0,0,0.2);
+          ">
             Create Event
           </button>
-          <div class="status-message" id="statusMessage"></div>
-          <div class="success-content" id="successContent" style="display: none;">
-            <p class="success-text">✓ Event Created!</p>
-            <a class="calendar-link" id="calendarLink" target="_blank">
+
+          <div class="status-message" id="statusMessage" style="
+            margin-top:10px;
+            font-size:12px;
+            color:#dc2626;
+            font-weight:500;
+          "></div>
+
+          <div class="success-content" id="successContent" style="
+            display:none;
+            margin-top:14px;
+            background:#ecfdf5;
+            border:1px solid #10b98133;
+            border-radius:6px;
+            padding:10px;
+            box-shadow:0 1px 2px rgba(0,0,0,0.05);
+          ">
+            <p class="success-text" style="
+              margin:0 0 6px 0;
+              color:#065f46;
+              font-weight:600;
+              font-size:12px;
+              line-height:1.4;
+            ">
+              ✓ Event Created
+            </p>
+            <a class="calendar-link" id="calendarLink" target="_blank" style="
+              display:inline-block;
+              font-size:12px;
+              line-height:1.2;
+              color:#065f46;
+              font-weight:500;
+              text-decoration:underline;
+              word-break:break-word;
+            ">
               Add to Google Calendar
             </a>
           </div>
@@ -107,145 +212,148 @@ function showEventCreator(selectedText) {
     </div>
   `;
 
-  log('UI HTML created, adding to page');
-
-  // Add to page
   document.body.appendChild(eventCreatorContainer);
-  log('UI added to document.body');
+  log("Popup injected");
 
-  // Add event listeners
-  const createBtn = document.getElementById('createEventBtn');
-  const closeBtn = document.getElementById('closeEventCreatorBtn');
-  const overlay = eventCreatorContainer.querySelector('.event-creator-overlay');
-  const modal = eventCreatorContainer.querySelector('.event-creator-modal');
+  const overlayEl = eventCreatorContainer.querySelector(".event-creator-overlay");
+  const modalEl   = eventCreatorContainer.querySelector(".event-creator-modal");
+  const closeBtn  = document.getElementById("closeEventCreatorBtn");
+  const createBtn = document.getElementById("createEventBtn");
 
-  if (createBtn) {
-    log('Create button found, adding event listener');
-    createBtn.addEventListener('click', async () => {
-      log('Create button clicked');
-      await handleCreateEvent(selectedText);
-    });
-  } else {
-    log('ERROR: Create button not found!');
-  }
+  if (!closeBtn) log("closeBtn NOT FOUND");
+  if (!overlayEl) log("overlayEl NOT FOUND");
+  if (!modalEl) log("modalEl NOT FOUND");
 
-  if (closeBtn) {
-    log('Close button found, adding event listener');
-    closeBtn.addEventListener('click', () => {
-      log('Close button clicked, removing UI');
-      eventCreatorContainer.remove();
-    });
-  } else {
-    log('ERROR: Close button not found!');
-  }
-
-  if (overlay) {
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        log('Overlay clicked, removing UI');
-        eventCreatorContainer.remove();
-      }
-    });
-  } else {
-    log('ERROR: Overlay element not found!');
-  }
-
-  if (modal) {
-    modal.addEventListener('click', (e) => {
+  // stop events in modal from bubbling to document
+  ["mousedown","mouseup","click"].forEach(ev => {
+    modalEl.addEventListener(ev, e => {
       e.stopPropagation();
     });
-  }
+  });
 
-  log('UI setup complete');
+  // close button: close immediately on mousedown
+  closeBtn.addEventListener("mousedown", (e) => {
+    log("closeBtn mousedown");
+    e.stopPropagation();
+    e.preventDefault();
+    destroyPopup();
+  });
+
+  // fallback on click
+  closeBtn.addEventListener("click", (e) => {
+    log("closeBtn click fallback");
+    e.stopPropagation();
+    e.preventDefault();
+    destroyPopup();
+  });
+
+  // clicking outside (overlay) closes popup
+  ["mousedown","mouseup","click"].forEach(ev => {
+    overlayEl.addEventListener(ev, (e) => {
+      if (e.target === overlayEl) {
+        log(`overlay ${ev} -> close`);
+        e.stopPropagation();
+        e.preventDefault();
+        destroyPopup();
+      }
+    });
+  });
+
+  // Create Event button
+  createBtn.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    log("createEventBtn mousedown");
+    handleCreateEvent(selectedText);
+  });
 }
 
+// close popup + clear highlight so it won't reopen immediately
+function destroyPopup() {
+  log("destroyPopup called");
 
-// Function to handle event creation
+  if (eventCreatorContainer) {
+    eventCreatorContainer.remove();
+    eventCreatorContainer = null;
+  }
+
+  const sel = window.getSelection();
+  if (sel && sel.removeAllRanges) {
+    sel.removeAllRanges();
+  }
+
+  log("Popup removed + selection cleared");
+}
+
+// ask background.js to parse the event and build calendar link
 async function handleCreateEvent(text) {
-  log('handleCreateEvent called with text length:', text?.length);
-
-  const btn = document.getElementById('createEventBtn');
-  const statusDiv = document.getElementById('statusMessage');
-  const successDiv = document.getElementById('successContent');
-  const calendarLink = document.getElementById('calendarLink');
+  const btn = document.getElementById("createEventBtn");
+  const statusDiv = document.getElementById("statusMessage");
+  const successDiv = document.getElementById("successContent");
+  const calendarLink = document.getElementById("calendarLink");
 
   if (!btn) {
-    log('ERROR: Create button not found');
+    log("ERROR: createEventBtn missing?");
     return;
   }
 
-  log('Found all required elements, showing loading state');
-
-  // Show loading state
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner"></div> Creating...';
-  statusDiv.innerHTML = '';
+  btn.textContent = "Creating...";
+  statusDiv.textContent = "";
 
   try {
-    log('Sending analyzeText message to background script');
+    const resp = await sendAnalyzeText(text);
 
-    // Send message to background script to analyze text
-    const response = await new Promise((resolve, reject) => {
-      // Set a timeout to prevent hanging
-      const timeout = setTimeout(() => {
-        reject(new Error('Request timeout - background script did not respond'));
-      }, 10000); // 10 second timeout
+    if (resp?.success) {
+      btn.style.display = "none";
+      successDiv.style.display = "block";
+      calendarLink.href = resp.calendarUrl || "#";
 
-      chrome.runtime.sendMessage({
-        action: 'analyzeText',
-        text: text
-      }, (response) => {
-        clearTimeout(timeout);
-        if (chrome.runtime.lastError) {
-          log('ERROR in chrome.runtime.sendMessage:', chrome.runtime.lastError);
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          log('Received response from background:', response);
-          // Ensure response is not null/undefined
-          resolve(response || { success: false, error: 'No response from background script' });
-        }
-      });
-    });
-
-    if (response && typeof response === 'object' && response.success) {
-      log('Analysis successful, showing success state');
-
-      // Show success
-      btn.style.display = 'none';
-      successDiv.style.display = 'block';
-      calendarLink.href = response.calendarUrl || '#';
-      log('Calendar URL set:', response.calendarUrl);
-
-      // Auto-remove after 10 seconds
       setTimeout(() => {
-        if (eventCreatorContainer && eventCreatorContainer.parentNode) {
-          log('Auto-removing UI after timeout');
-          eventCreatorContainer.remove();
-        }
+        destroyPopup();
       }, 20000);
     } else {
-      const errorMsg = (response && typeof response === 'object' && response.error) 
-        ? response.error 
-        : 'Failed to create event - no valid response';
-      log('Analysis failed:', errorMsg);
-      throw new Error(errorMsg);
+      throw new Error(resp?.error || "Failed to create event");
     }
-  } catch (error) {
-    log('ERROR in handleCreateEvent:', error);
-    statusDiv.innerHTML = '<p class="error-text">Error creating event. Please try again.</p>';
+  } catch (err) {
+    statusDiv.textContent = "Error creating event. Please try again.";
     btn.disabled = false;
-    btn.innerHTML = 'Create Event';
+    btn.textContent = "Create Event";
   }
 }
 
-// Utility function to escape HTML
-function escapeHtml(text) {
-  const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;'
-  };
-  return text.replace(/[&<>"']/g, (m) => map[m]);
+// background messaging helper
+function sendAnalyzeText(text) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error("Request timeout"));
+    }, 10000);
+
+    chrome.runtime.sendMessage(
+      { action: "analyzeText", text },
+      (resp) => {
+        clearTimeout(timeout);
+
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        resolve(resp || { success: false, error: "No response" });
+      }
+    );
+  });
+}
+
+// escape user-provided HTML
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, (m) =>
+    ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;",
+    }[m])
+  );
 }

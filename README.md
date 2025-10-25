@@ -39,19 +39,17 @@ npm run build
 
 ## How to Use
 
-1. **Select Text**: Highlight any text on a webpage that contains event information
+1. **Highlight Text**: Simply highlight any text on a webpage that contains event information
    - Example: "Meeting tomorrow at 3 PM in conference room A"
    - Example: "Team lunch on Friday at noon"
 
-2. **Right-Click**: Right-click on the selected text
+2. **Automatic Popup**: The event creator popup will automatically appear when you highlight text
 
-3. **Create Event**: Choose "Create Event from Text" from the context menu
+3. **Create Event**: Click "Create Event" to process the highlighted text
 
-4. **Modal Appears**: An overlay modal will appear on the same page
+4. **Add to Calendar**: Click "Add to Google Calendar" to add the event to your calendar
 
-5. **Review & Create**: Click "Create Event" to process the text
-
-6. **Add to Calendar**: Click "Add to Google Calendar" to add the event
+**Note**: The popup will automatically disappear when you click elsewhere or deselect the text.
 
 ### Building
 ```bash
@@ -67,21 +65,19 @@ The built files will be in the `dist/` directory.
 - Check that "Developer mode" is enabled in `chrome://extensions/`
 - Try refreshing the extension after rebuilding
 
-### Context Menu Not Appearing
-- The context menu only appears when text is selected
-- Make sure you're right-clicking on selected text, not empty space
-
-### Modal Not Appearing
+### Popup Not Appearing
+- Make sure you're highlighting text (not just clicking)
 - Check the browser console for error messages
 - Ensure the content script is loading (check console logs)
 - Try refreshing the webpage
+- The popup appears automatically when text is selected - no right-click needed
 
 ## Permissions
 
 The extension requests the following permissions:
-- `contextMenus`: To add the right-click menu option
 - `storage`: For saving preferences (if needed in future)
 - `activeTab`: To access the current tab
+- `scripting`: To inject content scripts for text selection detection
 - `host_permissions`: To run on all websites
 
 ## Future Enhancements

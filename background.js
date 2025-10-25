@@ -58,20 +58,9 @@ try {
   log('Error loading API key from environment:', error.message);
 }
 
-// Creates a context menu item for selected text.
+// Extension installation handler
 chrome.runtime.onInstalled.addListener(() => {
-  log('Extension installed, creating context menu');
-  chrome.contextMenus.create({
-    id: 'gemini-create-event',
-    title: 'Create Event from Text',
-    contexts: ['selection'],
-  }, () => {
-    if (chrome.runtime.lastError) {
-      log('Error creating context menu:', chrome.runtime.lastError);
-    } else {
-      log('Context menu created successfully');
-    }
-  });
+  log('Extension installed - text selection detection is now active');
 });
 
 // Listen for messages from content script
@@ -147,51 +136,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Listens for clicks on the context menu item.
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  log('Context menu clicked:', {
-    menuItemId: info.menuItemId,
-    selectionText: info.selectionText?.substring(0, 100),
-    tabId: tab?.id,
-    tabUrl: tab?.url
-  });
-
-  if (info.menuItemId === 'gemini-create-event' && info.selectionText) {
-    if (!tab || !tab.id) {
-      log('ERROR: No valid tab found');
-      return;
-    }
-
-    // First, inject the content script if it's not already loaded
-    chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ['content.js']
-    }).then(() => {
-      log('Content script injected successfully');
-      
-      // Wait a moment for the content script to initialize
-      setTimeout(() => {
-        log('Sending message to content script on tab:', tab.id);
-        
-        // Send message to content script to show the UI
-        chrome.tabs.sendMessage(tab.id, {
-          action: 'createEvent',
-          text: info.selectionText
-        }, (response) => {
-          if (chrome.runtime.lastError) {
-            log('ERROR sending message to content script:', chrome.runtime.lastError);
-          } else {
-            log('Message sent successfully to content script');
-          }
-        });
-      }, 100);
-    }).catch((error) => {
-      log('ERROR injecting content script:', error);
-    });
-  } else {
-    log('Context menu click ignored - missing selection or wrong menu item');
-  }
-});
+// Context menu functionality removed - now using automatic text selection detection
 
 // Event analysis function using Gemini AI
 async function analyzeTextForEvent(text) {
