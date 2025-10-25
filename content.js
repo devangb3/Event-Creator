@@ -1,10 +1,5 @@
 // Content script to inject the event creator UI into webpages
 let eventCreatorContainer = null;
-let geminiSetupContainer = null;
-let isLoading = false;
-let isGeminiSetupVisible = false;
-let hasGeminiApiKey = false;
-let hasShownGeminiPrompt = false;
 
 // Debug logging function
 function log(message, data = null) {
@@ -37,28 +32,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'createEvent') {
     log('Creating event UI for text:', request.text?.substring(0, 100));
 
-    const maybeShowSetup = async () => {
-      if (!hasGeminiApiKey && !hasShownGeminiPrompt) {
-        hasShownGeminiPrompt = true;
-        showGeminiSetupModal({ autoOpen: true });
-      }
+    if (typeof request.text === 'string') {
       showEventCreator(request.text);
       sendResponse({ success: true });
-    };
-
-    if (typeof request.text === 'string') {
-      maybeShowSetup();
     } else {
       log('Invalid text received for event creation');
       sendResponse({ success: false, error: 'Invalid text selection' });
     }
-  } else if (request.action === 'showGeminiSetup') {
-    log('Creating Gemini setup UI');
-    showGeminiSetupModal({ autoOpen: true });
-    sendResponse({ success: true });
-  } else if (request.action === 'apiKeyStatus') {
-    hasGeminiApiKey = request?.hasApiKey === true;
-    sendResponse({ success: true });
   }
 
   return true; // Keep message channel open
@@ -83,19 +63,6 @@ setTimeout(() => {
   log('Content script is active and ready to receive messages');
   log('Chrome runtime available:', !!chrome.runtime);
   log('Chrome tabs available:', !!chrome.tabs);
-
-  try {
-    chrome.runtime.sendMessage({ action: 'getApiKeyStatus' }, (response) => {
-      if (chrome.runtime.lastError) {
-        log('Could not fetch API key status:', chrome.runtime.lastError.message);
-      } else if (response?.success && response.status) {
-        hasGeminiApiKey = response.status.hasApiKey === true;
-        log('Gemini API key status received:', hasGeminiApiKey);
-      }
-    });
-  } catch (error) {
-    log('Error requesting API key status:', error);
-  }
 }, 1000);
 
 // Function to show the event creator UI
@@ -192,160 +159,6 @@ function showEventCreator(selectedText) {
   log('UI setup complete');
 }
 
-function showGeminiSetupModal(options = {}) {
-  log('showGeminiSetupModal called');
-
-  if (isGeminiSetupVisible) {
-    log('Gemini setup modal already visible');
-    return;
-  }
-
-  if (geminiSetupContainer) {
-    geminiSetupContainer.remove();
-  }
-
-  geminiSetupContainer = document.createElement('div');
-  geminiSetupContainer.id = 'gemini-setup-container';
-  const shouldHighlight = options.autoOpen === true;
-
-  geminiSetupContainer.innerHTML = `
-    <div class="gemini-setup-overlay">
-      <div class="gemini-setup-modal${shouldHighlight ? ' highlight' : ''}" role="dialog" aria-modal="true" aria-labelledby="geminiSetupTitle">
-        <div class="gemini-setup-header">
-          <h3 id="geminiSetupTitle">Enable Gemini AI</h3>
-          <button class="close-button" id="closeGeminiSetupBtn" type="button" aria-label="Close Gemini setup">×</button>
-        </div>
-        <div class="gemini-setup-body">
-          <p class="setup-description">
-            Paste your Google Gemini API key below to enable AI-powered event extraction.
-            This key is stored securely on your device.
-          </p>
-          <label class="input-label" for="geminiApiKeyInput">Gemini API Key</label>
-          <input type="password" id="geminiApiKeyInput" class="gemini-input" placeholder="AIza..." autocomplete="off" />
-          <div class="setup-actions">
-            <button class="primary-btn" id="saveGeminiApiKeyBtn">Save API Key</button>
-            <button class="secondary-btn" id="testGeminiApiKeyBtn">Test API Key</button>
-          </div>
-          <div class="setup-status" id="geminiSetupStatus"></div>
-          <p class="setup-help">
-            Don't have a key? <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Get one here</a>.
-          </p>
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(geminiSetupContainer);
-  isGeminiSetupVisible = true;
-
-  const overlay = geminiSetupContainer.querySelector('.gemini-setup-overlay');
-  const modal = geminiSetupContainer.querySelector('.gemini-setup-modal');
-  const closeBtn = document.getElementById('closeGeminiSetupBtn');
-  const saveBtn = document.getElementById('saveGeminiApiKeyBtn');
-  const testBtn = document.getElementById('testGeminiApiKeyBtn');
-  const apiKeyInput = document.getElementById('geminiApiKeyInput');
-  const statusDiv = document.getElementById('geminiSetupStatus');
-
-  const closeModal = () => {
-    if (geminiSetupContainer) {
-      geminiSetupContainer.remove();
-      geminiSetupContainer = null;
-      isGeminiSetupVisible = false;
-    }
-  };
-
-  if (overlay) {
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) {
-        closeModal();
-      }
-    });
-  }
-
-  if (modal) {
-    modal.addEventListener('click', (event) => {
-      event.stopPropagation();
-    });
-  }
-
-  if (closeBtn) {
-    closeBtn.addEventListener('click', () => {
-      closeModal();
-    });
-  }
-
-  const updateStatus = (message, type = 'info') => {
-    if (!statusDiv) return;
-    statusDiv.textContent = message;
-    statusDiv.setAttribute('data-status-type', type);
-  };
-
-  const setButtonsDisabled = (disabled) => {
-    if (saveBtn) saveBtn.disabled = disabled;
-    if (testBtn) testBtn.disabled = disabled;
-    if (apiKeyInput) apiKeyInput.disabled = disabled;
-  };
-
-  const handleApiKeyAction = async (action) => {
-    if (!apiKeyInput) return;
-    const apiKey = apiKeyInput.value.trim();
-
-    if (!apiKey) {
-      updateStatus('Please enter your Gemini API key.', 'error');
-      return;
-    }
-
-    try {
-      setButtonsDisabled(true);
-      updateStatus(`${action === 'save' ? 'Saving' : 'Testing'} API key...`, 'pending');
-
-      // Send message to background to save/test the API key
-      const response = await new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage({
-          action: action === 'save' ? 'setApiKey' : 'testApiKey',
-          apiKey
-        }, (result) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(result);
-          }
-        });
-      });
-
-      if (response?.success) {
-        updateStatus(action === 'save' ? 'API key saved successfully!' : 'API key is valid!', 'success');
-        if (action === 'save') {
-          setTimeout(() => {
-            closeModal();
-          }, 1500);
-        }
-      } else {
-        throw new Error(response?.error || `Failed to ${action} API key`);
-      }
-    } catch (error) {
-      log(`ERROR during API key ${action}:`, error);
-      updateStatus(error.message || `Failed to ${action} API key`, 'error');
-    } finally {
-      setButtonsDisabled(false);
-    }
-  };
-
-  if (saveBtn) {
-    saveBtn.addEventListener('click', () => handleApiKeyAction('save'));
-  }
-
-  if (testBtn) {
-    testBtn.addEventListener('click', () => handleApiKeyAction('test'));
-  }
-
-  // Autofocus input
-  setTimeout(() => {
-    if (apiKeyInput) {
-      apiKeyInput.focus();
-    }
-  }, 50);
-}
 
 // Function to handle event creation
 async function handleCreateEvent(text) {

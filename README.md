@@ -20,9 +20,10 @@ A lightweight Chrome extension that allows you to select text on any webpage and
 ### 2. Configure API Key
 The extension will work with fallback parsing, but for AI-powered event extraction:
 
- **Through Extension Storage (Recommended)**
-   - Use the extension's built-in API key configuration
-   - The extension will prompt you to set the API key on first use
+ **Using Environment Variables (Recommended)**
+   - Create a `.env` file in the project root
+   - Add your API key: `GEMINI_API_KEY=your_actual_api_key_here`
+   - The API key will be built into the extension during the build process
 
 ### 3. Build the Extension
 ```bash

@@ -7,16 +7,19 @@ function log(message, data = null) {
   console.log(`[${timestamp}] GEMINI: ${message}`, data || '');
 }
 
-// Configuration - will be loaded from config.js if available
+// Configuration - will be loaded from environment variables
 let GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE';
 let GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-// Try to load configuration
+// Try to load configuration from environment variables
 try {
-  // In Chrome extension context, we need to use importScripts or similar
-  if (typeof importScripts !== 'undefined') {
+  // Check if we're in a build environment with process.env available
+  if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
+    GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    log('Loaded API key from environment variable');
+  } else if (typeof importScripts !== 'undefined') {
     // Service worker context - configuration should be passed via message
-    log('Running in service worker context');
+    log('Running in service worker context - API key will be set via setApiKey function');
   } else if (typeof window !== 'undefined') {
     // Browser context - try to load config if available
     if (window.config) {

@@ -3,7 +3,8 @@ function safeSendMessage(tabId, message) {
   try {
     chrome.tabs.sendMessage(tabId, message, () => {
       if (chrome.runtime.lastError) {
-        log('Tab message ignored (likely no content script):', {
+        // Only log as warning, not error, since this is expected when content script isn't loaded
+        log('Tab message ignored (content script not loaded):', {
           tabId,
           error: chrome.runtime.lastError.message
         });
@@ -45,15 +46,17 @@ log('Chrome runtime available:', {
   contextMenus: !!chrome.contextMenus
 });
 
-// Initialize Gemini service with API key from storage
-chrome.storage.sync.get(['geminiApiKey'], (result) => {
-  if (result.geminiApiKey) {
-    log('Loading API key from storage');
-    setApiKey(result.geminiApiKey);
+// Initialize Gemini service with API key from environment variable
+try {
+  if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
+    log('Loading API key from environment variable');
+    setApiKey(process.env.GEMINI_API_KEY);
   } else {
-    log('No API key found in storage - Gemini features will use fallback parsing');
+    log('No API key found in environment - Gemini features will use fallback parsing');
   }
-});
+} catch (error) {
+  log('Error loading API key from environment:', error.message);
+}
 
 // Creates a context menu item for selected text.
 chrome.runtime.onInstalled.addListener(() => {
@@ -104,72 +107,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'setApiKey') {
-    log('Setting API key');
-    const apiKey = typeof request.apiKey === 'string' ? request.apiKey.trim() : '';
-
-    if (!apiKey) {
-      sendResponse({ success: false, error: 'API key is required' });
-      return true;
-    }
-
-    chrome.storage.sync.set({ geminiApiKey: apiKey }, () => {
-      setApiKey(apiKey);
-      log('API key saved and set');
-      sendResponse({ success: true });
-
-      // Notify current tab that API key is set
-      if (sender?.tab?.id) {
-        chrome.tabs.sendMessage(sender.tab.id, { action: 'apiKeyStatus', hasApiKey: true });
-      }
-
-      // Notify other tabs as well
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach((tab) => {
-          if (tab.id !== sender?.tab?.id) {
-            chrome.tabs.sendMessage(tab.id, { action: 'apiKeyStatus', hasApiKey: true });
-          }
-        });
-      });
+    log('API key management via UI is disabled - using environment variable instead');
+    sendResponse({ 
+      success: false, 
+      error: 'API key is now managed via environment variable. Please set GEMINI_API_KEY in your .env file and rebuild the extension.' 
     });
     return true;
   }
 
   if (request.action === 'testApiKey') {
-    log('Testing API key validity');
-    const apiKey = typeof request.apiKey === 'string' ? request.apiKey.trim() : '';
-
-    if (!apiKey) {
-      sendResponse({ success: false, error: 'API key is required' });
-      return true;
-    }
-
+    log('Testing API key from environment variable');
+    
     try {
-      setApiKey(apiKey);
-
-      // Minimal prompt to test key validity
+      // Test the current API key from environment
       analyzeTextWithGemini('Test event tomorrow at 12 PM').then(result => {
         if (result) {
           log('API key test succeeded');
           sendResponse({ success: true });
-
-      safeSendMessage(sender?.tab?.id, { action: 'apiKeyStatus', hasApiKey: true });
-
-      chrome.tabs.query({}, (tabs) => {
-        tabs.forEach((tab) => {
-          if (tab.id !== sender?.tab?.id) {
-            safeSendMessage(tab.id, { action: 'apiKeyStatus', hasApiKey: true });
-          }
-        });
-      });
-          safeSendMessage(sender?.tab?.id, { action: 'apiKeyStatus', hasApiKey: true });
-
-          chrome.tabs.query({}, (tabs) => {
-            tabs.forEach((tab) => {
-              if (tab.id !== sender?.tab?.id) {
-                safeSendMessage(tab.id, { action: 'apiKeyStatus', hasApiKey: true });
-              }
-            });
-          });
         } else {
           log('API key test returned no result');
           sendResponse({ success: false, error: 'API key test returned no event' });
@@ -208,18 +162,31 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       return;
     }
 
-    log('Sending message to content script on tab:', tab.id);
-
-    // Send message to content script to show the UI
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'createEvent',
-      text: info.selectionText
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        log('ERROR sending message to content script:', chrome.runtime.lastError);
-      } else {
-        log('Message sent successfully to content script');
-      }
+    // First, inject the content script if it's not already loaded
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['content.js']
+    }).then(() => {
+      log('Content script injected successfully');
+      
+      // Wait a moment for the content script to initialize
+      setTimeout(() => {
+        log('Sending message to content script on tab:', tab.id);
+        
+        // Send message to content script to show the UI
+        chrome.tabs.sendMessage(tab.id, {
+          action: 'createEvent',
+          text: info.selectionText
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            log('ERROR sending message to content script:', chrome.runtime.lastError);
+          } else {
+            log('Message sent successfully to content script');
+          }
+        });
+      }, 100);
+    }).catch((error) => {
+      log('ERROR injecting content script:', error);
     });
   } else {
     log('Context menu click ignored - missing selection or wrong menu item');

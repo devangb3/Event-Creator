@@ -7,6 +7,9 @@
     "build": "vite build && cp manifest.json dist/ && cp content.css dist/ && cp -r services dist/",
     "build:extension": "npm run build"
   },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
   "devDependencies": {
     "vite": "^6.2.0"
   }
