@@ -325,23 +325,52 @@ async function handleCreateEvent(text) {
 // background messaging helper
 function sendAnalyzeText(text) {
   return new Promise((resolve, reject) => {
+    const ts = new Date().toISOString();
+    console.log(`[${ts}] CONTENT DEBUG: sendAnalyzeText called with text:`, text?.slice(0, 80));
+
+    let timeoutFired = false;
+
     const timeout = setTimeout(() => {
-      reject(new Error("Request timeout"));
+      timeoutFired = true;
+      const ts2 = new Date().toISOString();
+      console.log(`[${ts2}] CONTENT DEBUG: sendAnalyzeText TIMEOUT after 10s (background maybe dead)`);
+      reject(new Error("Request timeout (background did not respond)"));
     }, 10000);
 
-    chrome.runtime.sendMessage(
-      { action: "analyzeText", text },
-      (resp) => {
-        clearTimeout(timeout);
+    try {
+      chrome.runtime.sendMessage(
+        { action: "analyzeText", text },
+        (resp) => {
+          clearTimeout(timeout);
 
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
+          const ts3 = new Date().toISOString();
+          console.log(`[${ts3}] CONTENT DEBUG: sendAnalyzeText callback fired`, {
+            resp,
+            lastError: chrome.runtime.lastError
+              ? chrome.runtime.lastError.message
+              : null,
+            timeoutFired
+          });
+
+          if (timeoutFired) {
+            // we already rejected, just ignore late callback
+            return;
+          }
+
+          if (chrome.runtime.lastError) {
+            reject(new Error("chrome.runtime.lastError: " + chrome.runtime.lastError.message));
+            return;
+          }
+
+          resolve(resp || { success: false, error: "No response" });
         }
-
-        resolve(resp || { success: false, error: "No response" });
-      }
-    );
+      );
+    } catch (err) {
+      clearTimeout(timeout);
+      const ts4 = new Date().toISOString();
+      console.log(`[${ts4}] CONTENT DEBUG: sendAnalyzeText threw synchronously`, err);
+      reject(err);
+    }
   });
 }
 

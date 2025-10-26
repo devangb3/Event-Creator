@@ -10,7 +10,8 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           background: 'background.js',
-          content: 'content.js'
+          content: 'content.js',
+          auth: 'auth.js',
         },
         output: {
           entryFileNames: '[name].js',

@@ -1,9 +1,22 @@
+// background.js
+
+// Bring in auth logic (makes self.Auth available)
+importScripts('auth.js');
+
+// Bring in Gemini logic (must define analyzeTextWithGemini, fallbackParseEventFromText, etc.)
+importScripts('services/geminiService.js');
+
+function log(message, data = null) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] BACKGROUND: ${message}`, data || '');
+}
+
 function safeSendMessage(tabId, message) {
   if (!tabId) return;
   try {
     chrome.tabs.sendMessage(tabId, message, () => {
       if (chrome.runtime.lastError) {
-        // Only log as warning, not error, since this is expected when content script isn't loaded
+        // Content script might not be attached on all pages; that's fine
         log('Tab message ignored (content script not loaded):', {
           tabId,
           error: chrome.runtime.lastError.message
@@ -15,30 +28,7 @@ function safeSendMessage(tabId, message) {
   }
 }
 
-// Create extension icon click handler when available
-if (chrome.action?.onClicked) {
-  chrome.action.onClicked.addListener((tab) => {
-    log('Extension icon clicked');
-    if (!tab?.id) {
-      log('No active tab to send API key prompt');
-      return;
-    }
-
-    safeSendMessage(tab.id, { action: 'showGeminiSetup' });
-  });
-} else {
-  log('chrome.action API not available; users must use context menu');
-}
-// Import Gemini service
-importScripts('services/geminiService.js');
-
-// Debug logging function
-function log(message, data = null) {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] BACKGROUND: ${message}`, data || '');
-}
-
-// Log when background script starts
+// --- Startup diagnostics ---
 log('Background script starting');
 log('Chrome runtime available:', {
   onInstalled: !!chrome.runtime.onInstalled,
@@ -46,24 +36,12 @@ log('Chrome runtime available:', {
   contextMenus: !!chrome.contextMenus
 });
 
-// Initialize Gemini service with API key from environment variable
-try {
-  if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
-    log('Loading API key from environment variable');
-    setApiKey(process.env.GEMINI_API_KEY);
-  } else {
-    log('No API key found in environment - Gemini features will use fallback parsing');
-  }
-} catch (error) {
-  log('Error loading API key from environment:', error.message);
-}
-
-// Extension installation handler
+// On install
 chrome.runtime.onInstalled.addListener(() => {
-  log('Extension installed - text selection detection is now active');
+  log('Extension installed - highlight detection active');
 });
 
-// Listen for messages from content script
+// MAIN MESSAGE HANDLER
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   log('Received message from content script:', { action: request?.action, sender: sender?.tab?.id });
 
@@ -73,72 +51,105 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // ========== AUTH + ANALYZE + CALENDAR LINK ==========
   if (request.action === 'analyzeText') {
     log('Processing analyzeText request:', { textLength: request.text?.length });
-
-    analyzeTextForEvent(request.text)
-      .then(result => {
+  
+    (async () => {
+      try {
+        // STEP 1: get token (this now logs internally too)
+        const token = await self.Auth.ensureAuthedAndGetToken();
+        log('Google auth OK, token present?', !!token);
+  
+        if (!token) {
+          // This should basically never hit now because ensureAuthedAndGetToken throws,
+          // but we guard anyway.
+          log('Auth returned NO token - aborting');
+          sendResponse({
+            success: false,
+            error: 'No auth token (user may have closed the sign-in popup)'
+          });
+          return;
+        }
+  
+        // STEP 2: analyze text → event details
+        const result = await analyzeTextForEvent(request.text);
         log('Text analysis completed:', result);
-        if (result) {
-          const calendarUrl = generateCalendarLink(result);
-          log('Generated calendar URL:', calendarUrl);
-          sendResponse({ success: true, calendarUrl });
-        } else {
+  
+        if (!result) {
           log('No event details found');
           sendResponse({ success: false, error: 'No event details found' });
+          return;
         }
-      })
-      .catch(error => {
-        log('Error in text analysis:', error);
-      sendResponse({ success: false, error: error.message || 'Unknown error analyzing text' });
-      });
-    return true; // Keep message channel open for async response
+  
+        // STEP 3: build calendar URL
+        const calendarUrl = generateCalendarLink(result);
+        log('Generated calendar URL:', calendarUrl);
+  
+        // STEP 4: open calendar in a new tab
+        chrome.tabs.create({ url: calendarUrl });
+  
+        // STEP 5: reply success to content.js
+        sendResponse({ success: true, calendarUrl });
+      } catch (err) {
+        log('Error in analyzeText flow:', {
+          message: err.message,
+          stack: err.stack
+        });
+        sendResponse({
+          success: false,
+          error: err.message || 'Authentication or analysis failed'
+        });
+      }
+    })();
+  
+    return true;
   }
 
+  // ==== API KEY / GEMINI LOGIC (unchanged except wording) ====
+
   if (request.action === 'setApiKey') {
-    log('API key management via UI is disabled - using environment variable instead');
-    sendResponse({ 
-      success: false, 
-      error: 'API key is now managed via environment variable. Please set GEMINI_API_KEY in your .env file and rebuild the extension.' 
+    log('API key management via UI is disabled - using environment/build-time key instead');
+    sendResponse({
+      success: false,
+      error: 'API key is bundled at build time. Manual setting is disabled.'
     });
     return true;
   }
 
   if (request.action === 'testApiKey') {
-    log('Testing API key from environment variable');
-    
-    try {
-      // Test the current API key from environment
-      analyzeTextWithGemini('Test event tomorrow at 12 PM').then(result => {
-        if (result) {
+    log('Testing Gemini parsing using current key');
+    (async () => {
+      try {
+        const test = await analyzeTextWithGemini('Test event tomorrow at 12 PM');
+        if (test) {
           log('API key test succeeded');
           sendResponse({ success: true });
         } else {
           log('API key test returned no result');
           sendResponse({ success: false, error: 'API key test returned no event' });
         }
-      }).catch(error => {
+      } catch (error) {
         log('API key test failed:', error.message);
         sendResponse({ success: false, error: error.message });
-      });
-    } catch (error) {
-      log('Error testing API key:', error);
-      sendResponse({ success: false, error: error.message });
-    }
+      }
+    })();
     return true;
   }
 
   if (request.action === 'getApiKeyStatus') {
-    const status = getApiKeyStatus();
+    const status = getApiKeyStatus?.();
     log('API key status:', status);
     sendResponse({ success: true, status });
     return true;
   }
+
+  return false;
 });
 
-// Context menu functionality removed - now using automatic text selection detection
+// ---- Helper functions ----
 
-// Event analysis function using Gemini AI
+// Analyze selected text -> event { title, start_time, end_time, description, location }
 async function analyzeTextForEvent(text) {
   try {
     if (!text || !text.trim()) {
@@ -147,14 +158,18 @@ async function analyzeTextForEvent(text) {
 
     log('Starting text analysis for event creation');
 
-    // Try Gemini AI first
+    // 1. Try Gemini AI first
     try {
-      const event = await analyzeTextWithGemini(text);
-      if (event) {
-        log('Gemini analysis successful:', event);
-        return event;
+      if (typeof analyzeTextWithGemini === 'function') {
+        const event = await analyzeTextWithGemini(text);
+        if (event) {
+          log('Gemini analysis successful:', event);
+          return event;
+        } else {
+          log('Gemini returned no event, falling back to regex parsing');
+        }
       } else {
-        log('Gemini returned no event, falling back to regex parsing');
+        log('analyzeTextWithGemini is not defined, skipping AI parse');
       }
     } catch (geminiError) {
       log('Gemini analysis failed:', {
@@ -163,16 +178,21 @@ async function analyzeTextForEvent(text) {
       });
     }
 
-    // Fallback to simple parsing if Gemini fails
-    const event = fallbackParseEventFromText(text);
-    if (event) {
-      log('Fallback parsing successful:', event);
+    // 2. Fallback to simple parsing if Gemini fails
+    if (typeof fallbackParseEventFromText === 'function') {
+      const event = fallbackParseEventFromText(text);
+      if (event) {
+        log('Fallback parsing successful:', event);
+        return event;
+      }
+      log('Fallback parsing found no event details either');
     } else {
-      log('Fallback parsing also failed to extract event details');
+      log('fallbackParseEventFromText is not defined');
     }
-    return event;
+
+    return null;
   } catch (error) {
-    log('Error analyzing text:', {
+    log('Error in analyzeTextForEvent:', {
       message: error.message,
       stack: error.stack
     });
@@ -180,23 +200,25 @@ async function analyzeTextForEvent(text) {
   }
 }
 
-// Legacy function - now handled by fallbackParseEventFromText
-// Kept for backward compatibility
-function parseEventFromText(text) {
-  return fallbackParseEventFromText(text);
-}
-
-// Generate Google Calendar link
+// Build the Google Calendar link to pre-fill event data
 function generateCalendarLink(event) {
   const baseUrl = 'https://www.google.com/calendar/render?action=TEMPLATE';
   const params = new URLSearchParams();
 
-  params.append('text', event.title);
+  if (event.title) {
+    params.append('text', event.title);
+  }
 
   if (event.start_time) {
-    const formatDateForGoogle = (isoString) => isoString.replace(/[-:]/g, '').split('.')[0] + 'Z';
+    // Google Calendar expects dates in YYYYMMDDTHHMMSSZ format
+    const formatDateForGoogle = (isoString) =>
+      isoString.replace(/[-:]/g, '').split('.')[0] + 'Z';
+
     const start = formatDateForGoogle(event.start_time);
-    const end = event.end_time ? formatDateForGoogle(event.end_time) : formatDateForGoogle(event.start_time);
+    const end = event.end_time
+      ? formatDateForGoogle(event.end_time)
+      : formatDateForGoogle(event.start_time);
+
     params.append('dates', `${start}/${end}`);
   }
 
