@@ -4,7 +4,7 @@
 importScripts('auth.js');
 
 // Bring in Gemini logic (must define analyzeTextWithGemini, fallbackParseEventFromText, etc.)
-importScripts('services/geminiService.js');
+importScripts('services/promptAPIService.js');
 
 function log(message, data = null) {
   const timestamp = new Date().toISOString();
@@ -168,7 +168,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     log('Testing Gemini parsing using current key');
     (async () => {
       try {
-        const test = await analyzeTextWithGemini('Test event tomorrow at 12 PM');
+        const test = await analyzeTextWithPromptAPI('Test event tomorrow at 12 PM');
         if (test) {
           log('API key test succeeded');
           sendResponse({ success: true });
@@ -207,21 +207,21 @@ async function analyzeTextForEvent(text) {
 
     // 1. Try Gemini AI first
     try {
-      if (typeof analyzeTextWithGemini === 'function') {
-        const event = await analyzeTextWithGemini(text);
+      if (typeof analyzeTextWithPromptAPI === 'function') {
+        const event = await analyzeTextWithPromptAPI(text);
         if (event) {
-          log('Gemini analysis successful:', event);
+          log('Prompt API analysis successful:', event);
           return event;
         } else {
-          log('Gemini returned no event, falling back to regex parsing');
+          log('Prompt API returned no event, falling back to regex parsing');
         }
       } else {
-        log('analyzeTextWithGemini is not defined, skipping AI parse');
+        log('analyzeTextWithPromptAPI is not defined, skipping AI parse');
       }
-    } catch (geminiError) {
-      log('Gemini analysis failed:', {
-        message: geminiError.message,
-        stack: geminiError.stack
+    } catch (promptAPIError) {
+      log('promptAPI analysis failed:', {
+        message: promptAPIError.message,
+        stack: promptAPIError.stack
       });
     }
 
