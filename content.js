@@ -13,12 +13,24 @@ function log(msg, data = null) {
 
 console.log(">>> CONTENT.JS ATTACHED <<<", window.location.href);
 
-// OPTIONAL: background trigger support
+// Message handler for popup and background script communication
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request?.action === "createEvent" && typeof request.text === "string") {
     log("BG requested createEvent", { textPreview: request.text.slice(0, 80) });
     showEventCreator(request.text);
     sendResponse({ success: true });
+  } else if (request?.action === "getSelectedText") {
+    // Handle popup request for selected text
+    const selectedText = window.getSelection().toString().trim();
+    log("Popup requested selected text", { 
+      textPreview: selectedText.slice(0, 80),
+      length: selectedText.length 
+    });
+    sendResponse({ 
+      success: true, 
+      text: selectedText,
+      hasSelection: selectedText.length > 0
+    });
   } else {
     sendResponse({ success: false, error: "Bad request or no text" });
   }
@@ -27,6 +39,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Listen for mouseup anywhere in the page
 document.addEventListener("mouseup", (e) => {
+  // Store mouse position for button placement
+  window.lastMouseX = e.clientX;
+  window.lastMouseY = e.clientY;
+
   // If popup is already open AND mouseup happened inside it, do nothing
   if (eventCreatorContainer && eventCreatorContainer.contains(e.target)) {
     log("mouseup inside popup -> ignore");
@@ -38,6 +54,8 @@ document.addEventListener("mouseup", (e) => {
   log("document mouseup", {
     textPreview: selectedText.slice(0, 80),
     len: selectedText.length,
+    mouseX: e.clientX,
+    mouseY: e.clientY
   });
 
   // Only trigger popup if real selection (>3 chars)
@@ -48,7 +66,7 @@ document.addEventListener("mouseup", (e) => {
 
 log(">>> mouseup listener attached");
 
-// Build + show popup
+// Build + show small button near mouse pointer
 function showEventCreator(selectedText) {
   log("showEventCreator called", { textPreview: selectedText.slice(0, 80) });
 
@@ -58,214 +76,83 @@ function showEventCreator(selectedText) {
     eventCreatorContainer = null;
   }
 
+  // Get mouse position from the last mouseup event
+  const mouseX = window.lastMouseX || 0;
+  const mouseY = window.lastMouseY || 0;
+
   eventCreatorContainer = document.createElement("div");
   eventCreatorContainer.id = "gemini-event-creator";
+  eventCreatorContainer.style.cssText = `
+    position: fixed;
+    top: ${mouseY + 10}px;
+    left: ${mouseX + 10}px;
+    z-index: 999999;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    pointer-events: auto;
+  `;
 
-  // --- STYLE PALETTE ---
-  // Overlay: same dim background
-  // Card: subtle off-white / light gray body
-  // Header: slightly darker strip
-  // Button: neutral/dark button instead of bright blue
-  // Text box: soft gray background
-  //
-  // The goal is "tooling panel" vibe instead of "Google popup".
-  //
+  // Create a small floating button
   eventCreatorContainer.innerHTML = `
-    <div class="event-creator-overlay" style="
-      position:fixed;
-      inset:0;
-      z-index:999999;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      background:rgba(0,0,0,0.35);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    <div class="event-creator-button" style="
+      background: #111827;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+      white-space: nowrap;
     ">
-      <div class="event-creator-modal" role="dialog" aria-modal="true" style="
-        background:#f8f9fa;
-        max-width:360px;
-        width:90%;
-        border-radius:10px;
-        box-shadow:0 20px 48px rgba(0,0,0,0.35);
-        position:relative;
-        z-index:1000001;
-        border:1px solid rgba(0,0,0,0.08);
-        color:#1a1a1a;
-      ">
-        <div class="event-creator-header" style="
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          padding:12px 16px;
-          background:#eceff1;
-          border-bottom:1px solid rgba(0,0,0,0.07);
-          border-top-left-radius:10px;
-          border-top-right-radius:10px;
-        ">
-          <h3 style="
-            margin:0;
-            font-size:14px;
-            font-weight:600;
-            color:#1f2937;
-            letter-spacing:-0.02em;
-          ">Create Event</h3>
-
-          <button class="close-button" id="closeEventCreatorBtn" style="
-            border:none;
-            background:none;
-            font-size:16px;
-            line-height:16px;
-            cursor:pointer;
-            padding:4px 8px;
-            font-weight:600;
-            color:#4b5563;
-          ">×</button>
-        </div>
-
-        <div class="event-creator-body" style="
-          padding:16px;
-          max-height:60vh;
-          overflow:auto;
-          font-size:13px;
-          line-height:1.4;
-          color:#1f2937;
-        ">
-
-          <div class="selected-text-preview" style="margin-bottom:14px;">
-            <p style="
-              margin:0 0 6px 0;
-              font-weight:600;
-              color:#111827;
-              font-size:12px;
-              letter-spacing:-0.02em;
-            ">Selected text</p>
-
-            <p class="selected-text" style="
-              margin:0;
-              background:#ffffff;
-              border:1px solid rgba(0,0,0,0.1);
-              border-radius:6px;
-              padding:8px;
-              font-size:12px;
-              line-height:1.4;
-              color:#374151;
-              white-space:pre-wrap;
-              box-shadow:0 1px 2px rgba(0,0,0,0.05);
-            ">${escapeHtml(selectedText)}</p>
-          </div>
-
-          <button class="create-event-btn" id="createEventBtn" style="
-            display:inline-block;
-            background:#111827;
-            color:#fff;
-            border:none;
-            border-radius:6px;
-            padding:8px 12px;
-            font-size:12px;
-            font-weight:500;
-            cursor:pointer;
-            line-height:1.2;
-            box-shadow:0 2px 4px rgba(0,0,0,0.2);
-          ">
-            Create Event
-          </button>
-
-          <div class="status-message" id="statusMessage" style="
-            margin-top:10px;
-            font-size:12px;
-            color:#dc2626;
-            font-weight:500;
-          "></div>
-
-          <div class="success-content" id="successContent" style="
-            display:none;
-            margin-top:14px;
-            background:#ecfdf5;
-            border:1px solid #10b98133;
-            border-radius:6px;
-            padding:10px;
-            box-shadow:0 1px 2px rgba(0,0,0,0.05);
-          ">
-            <p class="success-text" style="
-              margin:0 0 6px 0;
-              color:#065f46;
-              font-weight:600;
-              font-size:12px;
-              line-height:1.4;
-            ">
-              ✓ Event Created
-            </p>
-            <a class="calendar-link" id="calendarLink" target="_blank" style="
-              display:inline-block;
-              font-size:12px;
-              line-height:1.2;
-              color:#065f46;
-              font-weight:500;
-              text-decoration:underline;
-              word-break:break-word;
-            ">
-              Add to Google Calendar
-            </a>
-          </div>
-        </div>
-      </div>
+      <span style="font-size: 14px;">📅</span>
+      <span>Create Event</span>
     </div>
   `;
 
   document.body.appendChild(eventCreatorContainer);
-  log("Popup injected");
+  log("Small button injected at position:", { x: mouseX + 10, y: mouseY + 10 });
 
-  const overlayEl = eventCreatorContainer.querySelector(".event-creator-overlay");
-  const modalEl   = eventCreatorContainer.querySelector(".event-creator-modal");
-  const closeBtn  = document.getElementById("closeEventCreatorBtn");
-  const createBtn = document.getElementById("createEventBtn");
+  const button = eventCreatorContainer.querySelector(".event-creator-button");
 
-  if (!closeBtn) log("closeBtn NOT FOUND");
-  if (!overlayEl) log("overlayEl NOT FOUND");
-  if (!modalEl) log("modalEl NOT FOUND");
-
-  // stop events in modal from bubbling to document
-  ["mousedown","mouseup","click"].forEach(ev => {
-    modalEl.addEventListener(ev, e => {
-      e.stopPropagation();
-    });
+  // Add hover effect
+  button.addEventListener("mouseenter", () => {
+    button.style.background = "#1f2937";
+    button.style.transform = "translateY(-1px)";
+    button.style.boxShadow = "0 6px 16px rgba(0,0,0,0.4)";
   });
 
-  // close button: close immediately on mousedown
-  closeBtn.addEventListener("mousedown", (e) => {
-    log("closeBtn mousedown");
+  button.addEventListener("mouseleave", () => {
+    button.style.background = "#111827";
+    button.style.transform = "translateY(0)";
+    button.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+  });
+
+  // Handle button click
+  button.addEventListener("click", (e) => {
     e.stopPropagation();
-    e.preventDefault();
-    destroyPopup();
-  });
-
-  // fallback on click
-  closeBtn.addEventListener("click", (e) => {
-    log("closeBtn click fallback");
-    e.stopPropagation();
-    e.preventDefault();
-    destroyPopup();
-  });
-
-  // clicking outside (overlay) closes popup
-  ["mousedown","mouseup","click"].forEach(ev => {
-    overlayEl.addEventListener(ev, (e) => {
-      if (e.target === overlayEl) {
-        log(`overlay ${ev} -> close`);
-        e.stopPropagation();
-        e.preventDefault();
-        destroyPopup();
-      }
-    });
-  });
-
-  // Create Event button
-  createBtn.addEventListener("mousedown", (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    log("createEventBtn mousedown");
+    log("Create Event button clicked");
     handleCreateEvent(selectedText);
   });
+
+  // Handle right-click to show editable form
+  button.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    log("Right-click on Create Event button");
+    showEditableForm(selectedText);
+  });
+
+  // Auto-hide after 5 seconds
+  setTimeout(() => {
+    if (eventCreatorContainer) {
+      destroyPopup();
+    }
+  }, 5000);
 }
 
 // close popup + clear highlight so it won't reopen immediately
@@ -277,48 +164,371 @@ function destroyPopup() {
     eventCreatorContainer = null;
   }
 
-  const sel = window.getSelection();
-  if (sel && sel.removeAllRanges) {
-    sel.removeAllRanges();
-  }
+  // const sel = window.getSelection();
+  // if (sel && sel.removeAllRanges) {
+  //   sel.removeAllRanges();
+  // }
 
   log("Popup removed + selection cleared");
 }
 
-// ask background.js to parse the event and build calendar link
-async function handleCreateEvent(text) {
-  const btn = document.getElementById("createEventBtn");
-  const statusDiv = document.getElementById("statusMessage");
-  const successDiv = document.getElementById("successContent");
-  const calendarLink = document.getElementById("calendarLink");
+// Show editable form for event details
+function showEditableForm(selectedText) {
+  log("showEditableForm called", { textPreview: selectedText.slice(0, 80) });
 
-  if (!btn) {
-    log("ERROR: createEventBtn missing?");
+  // Clean existing popup
+  if (eventCreatorContainer) {
+    eventCreatorContainer.remove();
+    eventCreatorContainer = null;
+  }
+
+  // Get mouse position
+  const mouseX = window.lastMouseX || 0;
+  const mouseY = window.lastMouseY || 0;
+
+  eventCreatorContainer = document.createElement("div");
+  eventCreatorContainer.id = "gemini-event-creator";
+  eventCreatorContainer.style.cssText = `
+    position: fixed;
+    top: ${mouseY + 10}px;
+    left: ${mouseX + 10}px;
+    z-index: 999999;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    pointer-events: auto;
+  `;
+
+  // Create editable form
+  eventCreatorContainer.innerHTML = `
+    <div class="event-editor-form" style="
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      padding: 20px;
+      min-width: 320px;
+      max-width: 400px;
+      border: 1px solid rgba(0,0,0,0.1);
+    ">
+      <div class="form-header" style="
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #e5e7eb;
+      ">
+        <h3 style="
+          margin: 0;
+          font-size: 16px;
+          font-weight: 600;
+          color: #1f2937;
+        ">Edit Event Details</h3>
+        <button id="closeFormBtn" style="
+          background: none;
+          border: none;
+          font-size: 20px;
+          cursor: pointer;
+          color: #6b7280;
+          padding: 4px;
+          border-radius: 4px;
+        ">×</button>
+      </div>
+
+      <form id="eventForm">
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label style="
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 6px;
+          ">Event Title *</label>
+          <input type="text" id="eventTitle" required style="
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+          " placeholder="Enter event title">
+        </div>
+
+        <div class="form-row" style="display: flex; gap: 12px; margin-bottom: 16px;">
+          <div class="form-group" style="flex: 1;">
+            <label style="
+              display: block;
+              font-size: 12px;
+              font-weight: 500;
+              color: #374151;
+              margin-bottom: 6px;
+            ">Start Time *</label>
+            <input type="datetime-local" id="startTime" required style="
+              width: 100%;
+              padding: 8px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              box-sizing: border-box;
+            ">
+          </div>
+          <div class="form-group" style="flex: 1;">
+            <label style="
+              display: block;
+              font-size: 12px;
+              font-weight: 500;
+              color: #374151;
+              margin-bottom: 6px;
+            ">End Time</label>
+            <input type="datetime-local" id="endTime" style="
+              width: 100%;
+              padding: 8px 12px;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              font-size: 14px;
+              box-sizing: border-box;
+            ">
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 16px;">
+          <label style="
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 6px;
+          ">Description</label>
+          <textarea id="eventDescription" rows="3" style="
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            resize: vertical;
+            box-sizing: border-box;
+            font-family: inherit;
+          " placeholder="Enter event description">${escapeHtml(selectedText)}</textarea>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 20px;">
+          <label style="
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 6px;
+          ">Location</label>
+          <input type="text" id="eventLocation" style="
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+          " placeholder="Enter event location">
+        </div>
+
+        <div class="form-actions" style="
+          display: flex;
+          gap: 12px;
+          justify-content: flex-end;
+        ">
+          <button type="button" id="cancelBtn" style="
+            padding: 8px 16px;
+            border: 1px solid #d1d5db;
+            background: white;
+            color: #374151;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+          ">Cancel</button>
+          <button type="submit" id="createEventBtn" style="
+            padding: 8px 16px;
+            border: none;
+            background: #111827;
+            color: white;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 500;
+          ">Create Event</button>
+        </div>
+      </form>
+
+      <div id="formStatus" style="
+        margin-top: 12px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        display: none;
+      "></div>
+    </div>
+  `;
+
+  document.body.appendChild(eventCreatorContainer);
+  log("Editable form injected");
+
+  // Set default values
+  const now = new Date();
+  const defaultStart = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
+  defaultStart.setHours(9, 0, 0, 0);
+  const defaultEnd = new Date(defaultStart.getTime() + 60 * 60 * 1000); // 1 hour later
+
+  document.getElementById('eventTitle').value = selectedText.slice(0, 50);
+  document.getElementById('startTime').value = defaultStart.toISOString().slice(0, 16);
+  document.getElementById('endTime').value = defaultEnd.toISOString().slice(0, 16);
+
+  // Add event listeners
+  const closeBtn = document.getElementById('closeFormBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+  const form = document.getElementById('eventForm');
+  const statusDiv = document.getElementById('formStatus');
+
+  // Close form
+  closeBtn.addEventListener('click', () => destroyPopup());
+  cancelBtn.addEventListener('click', () => destroyPopup());
+
+  // Handle form submission
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    handleFormSubmission();
+  });
+
+  // Auto-focus on title field
+  document.getElementById('eventTitle').focus();
+}
+
+// Handle form submission
+async function handleFormSubmission() {
+  const title = document.getElementById('eventTitle').value.trim();
+  const startTime = document.getElementById('startTime').value;
+  const endTime = document.getElementById('endTime').value;
+  const description = document.getElementById('eventDescription').value.trim();
+  const location = document.getElementById('eventLocation').value.trim();
+  const statusDiv = document.getElementById('formStatus');
+  const submitBtn = document.getElementById('createEventBtn');
+
+  if (!title) {
+    showFormStatus('Please enter an event title', 'error');
     return;
   }
 
-  btn.disabled = true;
-  btn.textContent = "Creating...";
-  statusDiv.textContent = "";
+  if (!startTime) {
+    showFormStatus('Please enter a start time', 'error');
+    return;
+  }
+
+  // Disable submit button
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Creating...';
+  showFormStatus('Creating event...', 'info');
+
+  try {
+    // Create event object from form data
+    const eventData = {
+      title: title,
+      start_time: new Date(startTime).toISOString(),
+      end_time: endTime ? new Date(endTime).toISOString() : null,
+      description: description || title,
+      location: location || null
+    };
+
+    // Send to background script for calendar creation
+    const response = await chrome.runtime.sendMessage({
+      action: 'createEventFromData',
+      eventData: eventData
+    });
+
+    if (response && response.success) {
+      showFormStatus(`Event "${response.eventTitle}" created successfully!`, 'success');
+      setTimeout(() => {
+        destroyPopup();
+      }, 2000);
+    } else {
+      throw new Error(response?.error || 'Failed to create event');
+    }
+
+  } catch (error) {
+    log('Error creating event from form:', error);
+    showFormStatus('Error creating event: ' + error.message, 'error');
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Create Event';
+  }
+}
+
+// Show form status message
+function showFormStatus(message, type) {
+  const statusDiv = document.getElementById('formStatus');
+  statusDiv.textContent = message;
+  statusDiv.className = `form-status ${type}`;
+  statusDiv.style.display = 'block';
+  
+  if (type === 'success') {
+    statusDiv.style.background = '#ecfdf5';
+    statusDiv.style.color = '#065f46';
+    statusDiv.style.border = '1px solid #10b98133';
+  } else if (type === 'error') {
+    statusDiv.style.background = '#fef2f2';
+    statusDiv.style.color = '#991b1b';
+    statusDiv.style.border = '1px solid #fca5a533';
+  } else {
+    statusDiv.style.background = '#eff6ff';
+    statusDiv.style.color = '#1e40af';
+    statusDiv.style.border = '1px solid #3b82f633';
+  }
+}
+
+// ask background.js to parse the event and build calendar link
+async function handleCreateEvent(text) {
+  const button = eventCreatorContainer?.querySelector(".event-creator-button");
+  
+  if (!button) {
+    log("ERROR: event creator button missing?");
+    return;
+  }
+
+  // Update button to show loading state
+  button.innerHTML = `
+    <span style="font-size: 14px;">⏳</span>
+    <span>Creating...</span>
+  `;
+  button.style.background = "#6b7280";
+  button.style.cursor = "not-allowed";
 
   try {
     const resp = await sendAnalyzeText(text);
 
     if (resp?.success) {
-      btn.style.display = "none";
-      successDiv.style.display = "block";
-      calendarLink.href = resp.calendarUrl || "#";
-
+      // Show success state
+      button.innerHTML = `
+        <span style="font-size: 14px;">✅</span>
+        <span>Created!</span>
+      `;
+      button.style.background = "#10b981";
+      
+      // Auto-hide after 2 seconds
       setTimeout(() => {
         destroyPopup();
-      }, 20000);
+      }, 2000);
     } else {
       throw new Error(resp?.error || "Failed to create event");
     }
   } catch (err) {
-    statusDiv.textContent = "Error creating event. Please try again.";
-    btn.disabled = false;
-    btn.textContent = "Create Event";
+    // Show error state
+    button.innerHTML = `
+      <span style="font-size: 14px;">❌</span>
+      <span>Error</span>
+    `;
+    button.style.background = "#ef4444";
+    
+    // Reset after 3 seconds
+    setTimeout(() => {
+      button.innerHTML = `
+        <span style="font-size: 14px;">📅</span>
+        <span>Create Event</span>
+      `;
+      button.style.background = "#111827";
+      button.style.cursor = "pointer";
+    }, 3000);
   }
 }
 

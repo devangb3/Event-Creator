@@ -17,10 +17,15 @@
   ],
 
   "oauth2": {
-    "client_id": "783268626889-gagb6sfqu1ogtnmtq293svhjjeh85l0s.apps.googleusercontent.com",
+    "client_id": "778463445529-inc762kc31950jktrevndvbgtk4hr2tq.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/calendar.events"
     ]
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Create Calendar Event"
   },
 
   "background": {

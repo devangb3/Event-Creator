@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
           background: 'background.js',
           content: 'content.js',
           auth: 'auth.js',
+          popup: 'popup.js',
         },
         output: {
           entryFileNames: '[name].js',

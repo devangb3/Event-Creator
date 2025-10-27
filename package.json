@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "vite build && cp manifest.json dist/ && cp content.css dist/ && cp -r services dist/",
+    "build": "vite build && copy manifest.json dist\\ && copy content.css dist\\ && copy popup.html dist\\ && copy popup.js dist\\ && xcopy services dist\\services\\ /E /I",
     "build:extension": "npm run build"
   },
   "dependencies": {

@@ -82,15 +82,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           return;
         }
   
-        // STEP 3: build calendar URL
-        const calendarUrl = generateCalendarLink(result);
-        log('Generated calendar URL:', calendarUrl);
+        // STEP 3: create event directly in Google Calendar
+        const createdEvent = await createCalendarEvent(token, result);
+        log('Event created successfully:', createdEvent);
   
-        // STEP 4: open calendar in a new tab
-        chrome.tabs.create({ url: calendarUrl });
-  
-        // STEP 5: reply success to content.js
-        sendResponse({ success: true, calendarUrl });
+        // STEP 4: reply success to content.js with event details
+        sendResponse({ 
+          success: true, 
+          eventId: createdEvent.id,
+          eventLink: createdEvent.htmlLink,
+          eventTitle: createdEvent.summary
+        });
       } catch (err) {
         log('Error in analyzeText flow:', {
           message: err.message,
@@ -99,6 +101,51 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({
           success: false,
           error: err.message || 'Authentication or analysis failed'
+        });
+      }
+    })();
+  
+    return true;
+  }
+
+  // ========== CREATE EVENT FROM FORM DATA ==========
+  if (request.action === 'createEventFromData') {
+    log('Processing createEventFromData request:', { eventData: request.eventData });
+  
+    (async () => {
+      try {
+        // STEP 1: get token
+        const token = await self.Auth.ensureAuthedAndGetToken();
+        log('Google auth OK, token present?', !!token);
+  
+        if (!token) {
+          log('Auth returned NO token - aborting');
+          sendResponse({
+            success: false,
+            error: 'No auth token (user may have closed the sign-in popup)'
+          });
+          return;
+        }
+  
+        // STEP 2: create event directly in Google Calendar
+        const createdEvent = await createCalendarEvent(token, request.eventData);
+        log('Event created successfully:', createdEvent);
+  
+        // STEP 3: reply success to content.js
+        sendResponse({ 
+          success: true, 
+          eventId: createdEvent.id,
+          eventLink: createdEvent.htmlLink,
+          eventTitle: createdEvent.summary
+        });
+      } catch (err) {
+        log('Error in createEventFromData flow:', {
+          message: err.message,
+          stack: err.stack
+        });
+        sendResponse({
+          success: false,
+          error: err.message || 'Authentication or event creation failed'
         });
       }
     })();
@@ -200,35 +247,84 @@ async function analyzeTextForEvent(text) {
   }
 }
 
-// Build the Google Calendar link to pre-fill event data
-function generateCalendarLink(event) {
-  const baseUrl = 'https://www.google.com/calendar/render?action=TEMPLATE';
-  const params = new URLSearchParams();
+// Create event directly in Google Calendar using the Calendar API
+async function createCalendarEvent(accessToken, eventData) {
+  log('Creating calendar event via API:', eventData);
+  
+  try {
+    // Format the event data for Google Calendar API
+    const calendarEvent = {
+      summary: eventData.title,
+      description: eventData.description || eventData.title,
+      start: {
+        dateTime: eventData.start_time,
+        timeZone: 'UTC'
+      },
+      end: {
+        dateTime: eventData.end_time || addOneHour(eventData.start_time),
+        timeZone: 'UTC'
+      }
+    };
 
-  if (event.title) {
-    params.append('text', event.title);
+    // Add location if provided
+    if (eventData.location) {
+      calendarEvent.location = eventData.location;
+    }
+
+    // Add attendees if provided
+    if (eventData.attendees && eventData.attendees.length > 0) {
+      calendarEvent.attendees = eventData.attendees.map(email => ({ email }));
+    }
+
+    // Add reminders
+    calendarEvent.reminders = {
+      useDefault: false,
+      overrides: [
+        { method: 'popup', minutes: 10 },
+        { method: 'email', minutes: 30 }
+      ]
+    };
+
+    log('Formatted calendar event:', calendarEvent);
+
+    // Make API request to create the event
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(calendarEvent)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      log('Calendar API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData
+      });
+      throw new Error(`Calendar API request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const createdEvent = await response.json();
+    log('Event created successfully:', {
+      id: createdEvent.id,
+      summary: createdEvent.summary,
+      htmlLink: createdEvent.htmlLink
+    });
+
+    return createdEvent;
+
+  } catch (error) {
+    log('Error creating calendar event:', error);
+    throw error;
   }
+}
 
-  if (event.start_time) {
-    // Google Calendar expects dates in YYYYMMDDTHHMMSSZ format
-    const formatDateForGoogle = (isoString) =>
-      isoString.replace(/[-:]/g, '').split('.')[0] + 'Z';
-
-    const start = formatDateForGoogle(event.start_time);
-    const end = event.end_time
-      ? formatDateForGoogle(event.end_time)
-      : formatDateForGoogle(event.start_time);
-
-    params.append('dates', `${start}/${end}`);
-  }
-
-  if (event.description) {
-    params.append('details', event.description);
-  }
-
-  if (event.location) {
-    params.append('location', event.location);
-  }
-
-  return `${baseUrl}&${params.toString()}`;
+// Helper function to add one hour to a datetime string
+function addOneHour(dateTimeString) {
+  const date = new Date(dateTimeString);
+  date.setHours(date.getHours() + 1);
+  return date.toISOString();
 }
