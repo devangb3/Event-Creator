@@ -2,7 +2,7 @@
 
 // Bring in auth logic (makes self.Auth available)
 importScripts('auth.js');
-import anyDateParser from './node_modules/any-date-parser/dist/index.mjs';
+import anyDateParser from 'any-date-parser';
 // Bring in Gemini logic (must define analyzeTextWithGemini, fallbackParseEventFromText, etc.)
 importScripts('services/promptAPIService.js');
 
