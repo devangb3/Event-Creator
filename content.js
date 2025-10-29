@@ -23,15 +23,17 @@ const CARD_MAX_WIDTH = "min(360px, 90vw)"; // shared width target for popup & sn
 
 /* Calendar-like colors */
 const COLOR_OPTIONS = [
-  { value: "default",   name: "Default",   hex: "#9ca3af" },
-  { value: "lavender",  name: "Lavender",  hex: "#a78bfa" },
-  { value: "sage",      name: "Sage",      hex: "#86efac" },
-  { value: "grape",     name: "Grape",     hex: "#c084fc" },
-  { value: "flamingo",  name: "Flamingo",  hex: "#fb7185" },
-  { value: "banana",    name: "Banana",    hex: "#facc15" },
-  { value: "tangerine", name: "Tangerine", hex: "#fb923c" },
-  { value: "peacock",   name: "Peacock",   hex: "#38bdf8" },
-  { value: "graphite",  name: "Graphite",  hex: "#6b7280" }
+  { value: "default",   name: "Default",   hex: "#4285f4" }, // Google-y blue
+  { value: "lavender",  name: "Lavender",  hex: "#a79bff" },
+  { value: "sage",      name: "Sage",      hex: "#7cb342" },
+  { value: "grape",     name: "Grape",     hex: "#b36ae2" },
+  { value: "flamingo",  name: "Flamingo",  hex: "#ff6d79" },
+  { value: "banana",    name: "Banana",    hex: "#fbd74b" },
+  { value: "tangerine", name: "Tangerine", hex: "#ff9c2e" },
+  { value: "peacock",   name: "Peacock",   hex: "#2c9fff" },
+  { value: "graphite",  name: "Graphite",  hex: "#6b6b6b" },
+  { value: "basil",     name: "Basil",     hex: "#0f9d58" },
+  { value: "tomato",    name: "Tomato",    hex: "#d50000" }
 ];
 
 /* Reminder options in minutes before event */

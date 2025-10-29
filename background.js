@@ -2,8 +2,9 @@
 
 // Bring in auth logic (makes self.Auth available)
 importScripts('auth.js');
-import anyDateParser from 'any-date-parser';
-// Bring in Gemini logic (must define analyzeTextWithGemini, fallbackParseEventFromText, etc.)
+import anyDateParser from './node_modules/any-date-parser/dist/index.mjs';
+// Bring in Gemini / parsing helpers (must define analyzeTextWithPromptAPI,
+// fallbackParseEventFromText, LanguageModel, etc.)
 importScripts('services/promptAPIService.js');
 
 function log(message, data = null) {
@@ -22,11 +23,91 @@ log('Chrome runtime available:', {
 // On install
 chrome.runtime.onInstalled.addListener(() => {
   log('Extension installed - highlight detection active');
+  // make sure we store default state if it's first install
+  saveServiceEnabled(serviceEnabled);
 });
 
-// MAIN MESSAGE HANDLER
+// On cold start
+chrome.runtime.onStartup?.addListener(() => {
+  log('Runtime startup');
+  loadServiceEnabled();
+});
+
+/* =========================================================
+   SERVICE TOGGLE (GLOBAL ON/OFF)
+   ---------------------------------------------------------
+   - popup asks getServiceStatus / enableService / disableService
+   - background stores and enforces it
+   - content.js relies on actions analyzeText / createEventFromData
+     being blocked if disabled
+========================================================= */
+
+const SERVICE_KEY = 'serviceEnabled';
+let serviceEnabled = true; // default ON
+
+function loadServiceEnabled() {
+  chrome.storage.local.get(SERVICE_KEY, (res) => {
+    if (chrome.runtime.lastError) {
+      log('storage.get error:', chrome.runtime.lastError.message);
+    }
+    serviceEnabled =
+      res[SERVICE_KEY] === undefined ? true : !!res[SERVICE_KEY];
+    log('Loaded serviceEnabled:', { serviceEnabled });
+  });
+}
+
+// call once immediately so serviceEnabled has persisted value
+loadServiceEnabled();
+
+function saveServiceEnabled(val) {
+  chrome.storage.local.set({ [SERVICE_KEY]: !!val }, () => {
+    if (chrome.runtime.lastError) {
+      log('storage.set error:', chrome.runtime.lastError.message);
+    }
+  });
+}
+
+function broadcastServiceEnabled() {
+  // notify all tabs' content scripts
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs || []) {
+      if (tab && tab.id >= 0) {
+        try {
+          chrome.tabs.sendMessage(tab.id, {
+            action: 'serviceStatus',
+            enabled: serviceEnabled
+          });
+        } catch (_) {
+          // ignore tabs that don't have our content script
+        }
+      }
+    }
+  });
+
+  // also ping any open popup
+  try {
+    chrome.runtime.sendMessage({
+      action: 'serviceStatus',
+      enabled: serviceEnabled
+    });
+  } catch (_) {}
+}
+
+function setServiceEnabled(val) {
+  serviceEnabled = !!val;
+  saveServiceEnabled(serviceEnabled);
+  log('serviceEnabled changed', { serviceEnabled });
+  broadcastServiceEnabled();
+}
+
+/* =========================================================
+   MESSAGE HANDLER
+========================================================= */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  log('Received message from content script:', { action: request?.action, sender: sender?.tab?.id });
+  log('Received message:', {
+    action: request?.action,
+    senderTabId: sender?.tab?.id
+  });
 
   if (!request || typeof request !== 'object') {
     log('Invalid request received:', request);
@@ -34,19 +115,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // ========== AUTH + ANALYZE + CALENDAR LINK ==========
+  // -------- Toggle API the popup uses --------
+
+  if (request.action === 'getServiceStatus') {
+    sendResponse({ success: true, enabled: serviceEnabled });
+    return true;
+  }
+
+  if (request.action === 'enableService') {
+    setServiceEnabled(true);
+    sendResponse({ success: true, enabled: true });
+    return true;
+  }
+
+  if (request.action === 'disableService') {
+    setServiceEnabled(false);
+    sendResponse({ success: true, enabled: false });
+    return true;
+  }
+
+    // ========== AUTH + ANALYZE + DIRECT CREATE (QUICK CREATE) ==========
   if (request.action === 'analyzeText') {
+    // block if off
+    if (!serviceEnabled) {
+      log('Blocked analyzeText: service disabled');
+      sendResponse({ success: false, error: 'SERVICE_DISABLED' });
+      return true;
+    }
+
     log('Processing analyzeText request:', { textLength: request.text?.length });
-  
+
     (async () => {
       try {
-        // STEP 1: get token (this now logs internally too)
+        // STEP 1: get token
         const token = await self.Auth.ensureAuthedAndGetToken();
         log('Google auth OK, token present?', !!token);
-  
+
         if (!token) {
-          // This should basically never hit now because ensureAuthedAndGetToken throws,
-          // but we guard anyway.
           log('Auth returned NO token - aborting');
           sendResponse({
             success: false,
@@ -54,39 +159,69 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
           return;
         }
-  
-        // STEP 2: analyze text → event details
-        const event = await parseEventDetails(request.text);
-        // Convert date to RFC 5545 date format
-        const startDate = parse(
-        [
-          event.start_time,
-          event.start_date,
-          event.start_year,
-          event.timezone
-        ].join(' ')
-        );
-        const endDate = parse(
-          [event.end_time, event.end_date, event.end_year, event.timezone].join(' '));
-          event.dates = format(startDate) + '/' + format(endDate);
 
-        const googleCalendarUrl = createGoogleCalendarUrl(event);
-        chrome.tabs.create({ url: googleCalendarUrl.toString() });
-        log('Text analysis completed:', event);
-  
-        if (!event) {
-          log('No event details found');
-          sendResponse({ success: false, error: 'No event details found' });
+        // STEP 2: analyze text → event details (raw from LLM)
+        const rawEvent = await parseEventDetails(request.text);
+        log('Parsed rawEvent from model:', rawEvent);
+
+        // STEP 2.1: normalize into real ISO timestamps for Calendar API
+        // buildIsoDateTime("10/30/2025", "5 PM") -> "2025-10-30T23:00:00.000Z"
+        const startIso = buildIsoDateTime(
+          rawEvent.start_date,
+          rawEvent.start_time
+        );
+
+        const endIsoCandidate = buildIsoDateTime(
+          rawEvent.end_date || rawEvent.start_date,
+          rawEvent.end_time
+        );
+
+        const endIso =
+          endIsoCandidate ||
+          (startIso ? addOneHourIso(startIso) : null);
+
+        // If we still don't have a valid start, bail gracefully
+        if (!startIso) {
+          log('No valid start_time after normalization');
+          sendResponse({
+            success: false,
+            error: 'Could not infer a start time from the text'
+          });
           return;
         }
-  
-        // STEP 3: create event directly in Google Calendar
-        const createdEvent = await createCalendarEvent(token, event);
-        log('Event created successfully:', createdEvent);
-  
-        // STEP 4: reply success to content.js with event details
-        sendResponse({ 
-          success: true, 
+
+        // STEP 2.2: build object we actually send to Calendar API
+        // This mirrors the shape content.js sends in handleFormSubmission()
+        // so createCalendarEvent() can understand it.
+        const calendarReadyEvent = {
+          title: rawEvent.title || 'Untitled event',
+          start_time: startIso,
+          end_time: endIso,
+          description: (rawEvent.description || rawEvent.title || '').trim(),
+          location: rawEvent.location || null,
+          attendees: rawEvent.attendees || [],
+          // Quick Create doesn't ask the user for color/reminder,
+          // so give sane defaults that match Edit & Create assumptions:
+          color: "default",
+          reminder_minutes: null
+        };
+
+        log('QuickCreate calendarReadyEvent:', calendarReadyEvent);
+
+        // STEP 3: create event directly in Google Calendar (API)
+        const createdEvent = await createCalendarEvent(
+          token,
+          calendarReadyEvent
+        );
+        log('Event created successfully (quick create):', createdEvent);
+
+        // IMPORTANT:
+        // We DO NOT open a new tab anymore.
+        // chrome.tabs.create({ url: ... }) is intentionally removed.
+
+        // STEP 4: reply back to content.js so it can show snackbar
+        sendResponse({
+          success: true,
           eventId: createdEvent.id,
           eventLink: createdEvent.htmlLink,
           eventTitle: createdEvent.summary
@@ -102,20 +237,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
       }
     })();
-  
+
     return true;
   }
 
   // ========== CREATE EVENT FROM FORM DATA ==========
   if (request.action === 'createEventFromData') {
-    log('Processing createEventFromData request:', { eventData: request.eventData });
-  
+    // block if off
+    if (!serviceEnabled) {
+      log('Blocked createEventFromData: service disabled');
+      sendResponse({ success: false, error: 'SERVICE_DISABLED' });
+      return true;
+    }
+
+    log('Processing createEventFromData request:', {
+      eventData: request.eventData
+    });
+
     (async () => {
       try {
         // STEP 1: get token
         const token = await self.Auth.ensureAuthedAndGetToken();
         log('Google auth OK, token present?', !!token);
-  
+
         if (!token) {
           log('Auth returned NO token - aborting');
           sendResponse({
@@ -124,14 +268,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
           return;
         }
-  
-        // STEP 2: create event directly in Google Calendar
-        const createdEvent = await createCalendarEvent(token, request.eventData);
+
+        // STEP 2: create event directly via API
+        const createdEvent = await createCalendarEvent(
+          token,
+          request.eventData
+        );
         log('Event created successfully:', createdEvent);
-  
-        // STEP 3: reply success to content.js
-        sendResponse({ 
-          success: true, 
+
+        // STEP 3: reply
+        sendResponse({
+          success: true,
           eventId: createdEvent.id,
           eventLink: createdEvent.htmlLink,
           eventTitle: createdEvent.summary
@@ -147,17 +294,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
       }
     })();
-  
+
     return true;
   }
 
-  // ==== API KEY / GEMINI LOGIC (unchanged except wording) ====
+  // ==== API KEY / GEMINI LOGIC ====
 
   if (request.action === 'setApiKey') {
-    log('API key management via UI is disabled - using environment/build-time key instead');
+    log(
+      'API key management via UI is disabled - using environment/build-time key instead'
+    );
     sendResponse({
       success: false,
-      error: 'API key is bundled at build time. Manual setting is disabled.'
+      error:
+        'API key is bundled at build time. Manual setting is disabled.'
     });
     return true;
   }
@@ -166,13 +316,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     log('Testing Gemini parsing using current key');
     (async () => {
       try {
-        const test = await analyzeTextWithPromptAPI('Test event tomorrow at 12 PM');
+        const test = await analyzeTextWithPromptAPI(
+          'Test event tomorrow at 12 PM'
+        );
         if (test) {
           log('API key test succeeded');
           sendResponse({ success: true });
         } else {
           log('API key test returned no result');
-          sendResponse({ success: false, error: 'API key test returned no event' });
+          sendResponse({
+            success: false,
+            error: 'API key test returned no event'
+          });
         }
       } catch (error) {
         log('API key test failed:', error.message);
@@ -192,108 +347,117 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return false;
 });
 
-// ---- Helper functions ----
+/* =========================================================
+   HELPERS
+========================================================= */
 
-// Analyze selected text -> event { title, start_time, end_time, description, location }
-async function analyzeTextForEvent(text) {
-  try {
-    if (!text || !text.trim()) {
-      throw new Error('No text provided for analysis');
-    }
-
-    log('Starting text analysis for event creation');
-
-    // 1. Try Gemini AI first
-    try {
-      if (typeof analyzeTextWithPromptAPI === 'function') {
-        const event = await analyzeTextWithPromptAPI(text);
-        if (event) {
-          log('Prompt API analysis successful:', event);
-          return event;
-        } else {
-          log('Prompt API returned no event, falling back to regex parsing');
-        }
-      } else {
-        log('analyzeTextWithPromptAPI is not defined, skipping AI parse');
-      }
-    } catch (promptAPIError) {
-      log('promptAPI analysis failed:', {
-        message: promptAPIError.message,
-        stack: promptAPIError.stack
-      });
-    }
-
-    // 2. Fallback to simple parsing if Gemini fails
-    if (typeof fallbackParseEventFromText === 'function') {
-      const event = fallbackParseEventFromText(text);
-      if (event) {
-        log('Fallback parsing successful:', event);
-        return event;
-      }
-      log('Fallback parsing found no event details either');
-    } else {
-      log('fallbackParseEventFromText is not defined');
-    }
-
-    return null;
-  } catch (error) {
-    log('Error in analyzeTextForEvent:', {
-      message: error.message,
-      stack: error.stack
-    });
-    throw error;
+function mapUiColorToGoogleColorId(uiColor) {
+  // Maps UI color values to Google Calendar event colorId strings.
+  // If we return undefined, we just don't set colorId at all,
+  // which means "use the calendar's default color".
+  switch (uiColor) {
+    case "lavender":
+      return "1";
+    case "sage":
+      return "2";
+    case "grape":
+      return "3";
+    case "flamingo":
+      return "4";
+    case "banana":
+      return "5";
+    case "tangerine":
+      return "6";
+    case "peacock":
+      return "7";
+    case "graphite":
+      return "8";
+    // 9 is often "blueberry"/indigo; we're not exposing it in UI.
+    case "basil":
+      return "10";
+    case "tomato":
+      return "11";
+    case "default":
+    default:
+      return undefined;
   }
 }
 
-// Create event directly in Google Calendar using the Calendar API
+// Create event in Google Calendar via API
 async function createCalendarEvent(accessToken, eventData) {
   log('Creating calendar event via API:', eventData);
-  
+
   try {
-    // Format the event data for Google Calendar API
+    // normalize times coming from either quick create or edit form
+    const startDateTime = eventData.start_time;
+    const endDateTime =
+      eventData.end_time || addOneHourIso(eventData.start_time);
+
+    // build base event body
     const calendarEvent = {
       summary: eventData.title,
       description: eventData.description || eventData.title,
       start: {
-        dateTime: eventData.start_time,
-        timeZone: 'UTC'
+        dateTime: startDateTime
       },
       end: {
-        dateTime: eventData.end_time || addOneHour(eventData.start_time),
-        timeZone: 'UTC'
+        dateTime: endDateTime
       }
     };
 
-    // Add location if provided
+    // location if any
     if (eventData.location) {
       calendarEvent.location = eventData.location;
     }
 
-    // Add attendees if provided
+    // attendees if any
     if (eventData.attendees && eventData.attendees.length > 0) {
-      calendarEvent.attendees = eventData.attendees.map(email => ({ email }));
+      calendarEvent.attendees = eventData.attendees.map((email) => ({ email }));
     }
 
-    // Add reminders
-    calendarEvent.reminders = {
-      useDefault: false,
-      overrides: [
-        { method: 'popup', minutes: 10 },
-        { method: 'email', minutes: 30 }
-      ]
-    };
+    // COLOR mapping (UI color -> Google colorId)
+    const colorId = mapUiColorToGoogleColorId(eventData.color);
+    if (colorId) {
+      calendarEvent.colorId = colorId;
+    }
+
+    // REMINDERS
+    // If user picked a reminder time in minutes, prefer that as popup.
+    // We'll include only popup if user gave one, otherwise fallback to default 10/30 duo.
+    if (eventData.reminder_minutes && !isNaN(eventData.reminder_minutes)) {
+      const mins = parseInt(eventData.reminder_minutes, 10);
+
+      calendarEvent.reminders = {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: mins }
+        ]
+      };
+    } else {
+      // fallback (what we had before)
+      calendarEvent.reminders = {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 10 },
+          { method: 'email', minutes: 30 }
+        ]
+      };
+    }
 
     log('Formatted calendar event:', calendarEvent);
 
-    // Make API request to create the event
-    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(calendarEvent)
-    });
+    // send to Google Calendar
+    const response = await fetch(
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(calendarEvent)
+      }
+    );
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
@@ -302,7 +466,9 @@ async function createCalendarEvent(accessToken, eventData) {
         statusText: response.statusText,
         error: errorData
       });
-      throw new Error(`Calendar API request failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Calendar API request failed: ${response.status} ${response.statusText}`
+      );
     }
 
     const createdEvent = await response.json();
@@ -313,22 +479,22 @@ async function createCalendarEvent(accessToken, eventData) {
     });
 
     return createdEvent;
-
   } catch (error) {
     log('Error creating calendar event:', error);
     throw error;
   }
 }
 
-// Helper function to add one hour to a datetime string
-function addOneHour(dateTimeString) {
-  const date = new Date(dateTimeString);
-  date.setHours(date.getHours() + 1);
-  return date.toISOString();
+// helper for +1hr end time if user didn't give end (ISO-safe)
+function addOneHourIso(isoString) {
+  const d = new Date(isoString);
+  d.setHours(d.getHours() + 1);
+  return d.toISOString();
 }
 
-function parse(dateString) {
-  const parsed = anyDateParser.attempt(dateString);
+// convert "pieces" → Date using any-date-parser
+function parseDatePieces(joined) {
+  const parsed = anyDateParser.attempt(joined);
   return new Date(
     parsed.year,
     parsed.month - 1,
@@ -338,17 +504,52 @@ function parse(dateString) {
   );
 }
 
-function format(date) {
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const year = date.getFullYear();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
+// format Date → yyyymmddThhmmss for ?dates= param
+function formatForCalendar(d) {
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
 
   return [year, month, day, 'T', hours, minutes, seconds].join('');
 }
 
+// Build full ISO timestamp ("2025-10-29T00:00:00.000Z") from date + time strings
+function buildIsoDateTime(dateStr, timeStr) {
+  // Example dateStr: "10/29/2025"
+  // Example timeStr: "00:00" or "1:00 PM"
+  if (!dateStr || !timeStr) return null;
+
+  const parsed = anyDateParser.attempt(`${dateStr} ${timeStr}`);
+  if (
+    !parsed ||
+    parsed.year == null ||
+    parsed.month == null ||
+    parsed.day == null
+  ) {
+    return null;
+  }
+
+  const hour = parsed.hour ?? 0;
+  const minute = parsed.minute ?? 0;
+
+  // create Date in local time, then ISO
+  const d = new Date(
+    parsed.year,
+    parsed.month - 1,
+    parsed.day,
+    hour,
+    minute,
+    0,
+    0
+  );
+
+  return d.toISOString();
+}
+
+// Build Google Calendar "create event" UI link (also opens new tab)
 function createGoogleCalendarUrl(eventDetails) {
   const googleCalendarUrl = new URL(
     'https://calendar.google.com/calendar/render?action=TEMPLATE'
@@ -369,6 +570,13 @@ function createGoogleCalendarUrl(eventDetails) {
   return googleCalendarUrl;
 }
 
+/* =========================================================
+   LLM PARSING
+   parseEventDetails(text):
+   - ask LanguageModel to extract fields
+   - clean JSON
+========================================================= */
+
 async function parseEventDetails(text) {
   const session = await LanguageModel.create({
     temperature: 0,
@@ -379,7 +587,7 @@ async function parseEventDetails(text) {
     The following text describes an event. Extract "title", "start_time", "start_date", "start_year", "end_time", "end_date", "end_year", "description", "timezone" and "location" of the event. Return only JSON as result.
 
     * If no year is provided, use the current year ${new Date().getFullYear()}.
-    * If no date is provided, use the current date ${new Date().toLocaleDateString()}. 
+    * If no date is provided, use the current date ${new Date().toLocaleDateString()}.
     * If no timezone is provided, leave it empty.
     * If no end time is provided, set the end time to one hour after the start time
     * Do not convert the start time or end time
@@ -392,6 +600,7 @@ async function parseEventDetails(text) {
   return JSON.parse(fixCommonJSONMistakes(result), null, '  ');
 }
 
+// helpers for cleaning model JSON
 function addCommaBetweenQuotes(str) {
   return str.replace(/"([^"]*)"\s+"([^"]*)"/g, '"$1", "$2"');
 }
@@ -402,21 +611,17 @@ function extractTextBetweenCurlyBraces(str) {
   const lastBraceIndex = str.lastIndexOf('}');
 
   if (firstBraceIndex === -1 || lastBraceIndex === -1) {
-    return null; // No curly braces found
+    return null;
   }
 
   return str.substring(firstBraceIndex, lastBraceIndex + 1);
 }
 
 function curlyToBrackets(str) {
-  // Check if the input is a string
   if (typeof str !== 'string') {
     return 'Input must be a string.';
   }
-
-  // Use a regular expression to match curly braces with quoted strings inside
   return str.replace(/\{("([^"]*)"(?:,\s*)?)*\}/g, function (match) {
-    // Remove curly braces and replace with brackets
     return '[' + match.slice(1, -1) + ']';
   });
 }
