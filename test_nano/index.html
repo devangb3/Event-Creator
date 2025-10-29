@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Summarizer API Demo (Nano)</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; }
+    textarea, pre { width: 100%; box-sizing: border-box; }
+    textarea { height: 220px; }
+    pre { background: #f6f8fa; padding: 1rem; white-space: pre-wrap; }
+    button { margin-right: .5rem; }
+    #status { color: #444; margin: .5rem 0; }
+  </style>
+  <meta http-equiv="origin-trial" content="">
+</head>
+<body>
+  <h1>Summarizer API Demo</h1>
+
+  <p id="support"></p>
+  <p id="status"></p>
+
+  <label>
+    Input text:
+    <textarea id="input"></textarea>
+  </label>
+
+  <div style="margin: .5rem 0;">
+    <label>
+      Type:
+      <select id="type">
+        <option value="key-points" selected>key-points</option>
+        <option value="tldr">tldr</option>
+        <option value="teaser">teaser</option>
+        <option value="headline">headline</option>
+      </select>
+    </label>
+    <label>
+      Length:
+      <select id="length">
+        <option value="short">short</option>
+        <option value="medium" selected>medium</option>
+        <option value="long">long</option>
+      </select>
+    </label>
+    <label>
+      Format:
+      <select id="format">
+        <option value="markdown" selected>markdown</option>
+        <option value="plain-text">plain-text</option>
+      </select>
+    </label>
+  </div>
+
+  <button id="init">Initialize (download if needed)</button>
+  <button id="summarize">Summarize (batch)</button>
+  <button id="stream">Summarize (stream)</button>
+
+  <h3>Output</h3>
+  <pre id="output"></pre>
+
+  <script>
+    const supportEl = document.getElementById('support');
+    const statusEl = document.getElementById('status');
+    const outputEl = document.getElementById('output');
+    const initBtn = document.getElementById('init');
+    const summarizeBtn = document.getElementById('summarize');
+    const streamBtn = document.getElementById('stream');
+
+    let summarizer = null;
+
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+      console.log('[status]', msg);
+    }
+
+    if ('Summarizer' in self) {
+      supportEl.textContent = 'Summarizer API supported in this browser.';
+    } else {
+      supportEl.textContent = 'Summarizer API NOT supported. Use Chrome 138+ on desktop.';
+    }
+
+    async function ensureSummarizer() {
+      if (!('Summarizer' in self)) {
+        throw new Error('Summarizer API not supported in this browser.');
+      }
+      const availability = await Summarizer.availability();
+      setStatus(`Availability: ${availability}`);
+
+      if (!navigator.userActivation.isActive) {
+        throw new Error('User activation required. Click a button to proceed.');
+      }
+
+      if (summarizer) {
+        return summarizer;
+      }
+
+      const options = {
+        type: document.getElementById('type').value,
+        length: document.getElementById('length').value,
+        format: document.getElementById('format').value,
+        sharedContext: 'General summarization demo',
+        monitor(m) {
+          m.addEventListener('downloadprogress', (e) => {
+            const pct = Math.round(e.loaded * 100);
+            setStatus(`Model downloading… ${pct}%`);
+          });
+        }
+      };
+
+      setStatus('Creating summarizer (this may trigger model download)…');
+      summarizer = await Summarizer.create(options);
+      setStatus('Summarizer ready.');
+      return summarizer;
+    }
+
+    initBtn.addEventListener('click', async () => {
+      try {
+        await ensureSummarizer();
+      } catch (e) {
+        setStatus(e.message || String(e));
+      }
+    });
+
+    summarizeBtn.addEventListener('click', async () => {
+      try {
+        const s = await ensureSummarizer();
+        const text = document.getElementById('input').value.trim();
+        if (!text) {
+          setStatus('Please paste some input text first.');
+          return;
+        }
+        setStatus('Summarizing (batch)…');
+        const result = await s.summarize(text, { context: 'Audience: general readers.' });
+        outputEl.textContent = result;
+        setStatus('Done.');
+      } catch (e) {
+        setStatus(e.message || String(e));
+      }
+    });
+
+    streamBtn.addEventListener('click', async () => {
+      try {
+        const s = await ensureSummarizer();
+        const text = document.getElementById('input').value.trim();
+        if (!text) {
+          setStatus('Please paste some input text first.');
+          return;
+        }
+        outputEl.textContent = '';
+        setStatus('Streaming summary…');
+        const stream = s.summarizeStreaming(text, { context: 'Audience: junior developers.' });
+        for await (const chunk of stream) {
+          outputEl.textContent += chunk;
+        }
+        setStatus('Done.');
+      } catch (e) {
+        setStatus(e.message || String(e));
+      }
+    });
+  </script>
+</body>
+</html>
+
+

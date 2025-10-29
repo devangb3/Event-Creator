@@ -1116,7 +1116,7 @@ function sendAnalyzeText(text) {
       const ts2 = new Date().toISOString();
       console.log(`[${ts2}] CONTENT DEBUG: sendAnalyzeText TIMEOUT after 10s (background maybe dead)`);
       reject(new Error("Request timeout (background did not respond)"));
-    }, 10000);
+    }, 50000);
 
     try {
       chrome.runtime.sendMessage({ action: "analyzeText", text }, (resp) => {
