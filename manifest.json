@@ -1,19 +1,37 @@
 {
   "manifest_version": 3,
   "name": "Gemini Event Creator",
-  "description": "Select text on any webpage to quickly create Google Calendar events using Gemini.",
-  "version": "1.0",
+  "description": "Highlight text on any webpage to automatically create Google Calendar events using Gemini AI.",
+  "version": "1.1",
+
   "permissions": [
-    "contextMenus",
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting",
+    "identity" ,
+    "tabs"
   ],
+
   "host_permissions": [
     "<all_urls>"
   ],
+
+  "oauth2": {
+    "client_id": "520796813737-oc0it33t3bva4uaj5sig07k9pt0mtv2o.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar.events"
+    ]
+  },
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Create Calendar Event"
+  },
+
   "background": {
     "service_worker": "background.js"
   },
+
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -22,6 +40,7 @@
       "run_at": "document_end"
     }
   ],
+
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }

@@ -7,16 +7,19 @@ function log(message, data = null) {
   console.log(`[${timestamp}] GEMINI: ${message}`, data || '');
 }
 
-// Configuration - will be loaded from config.js if available
+// Configuration - will be loaded from environment variables
 let GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY_HERE';
 let GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
 
-// Try to load configuration
+// Try to load configuration from environment variables
 try {
-  // In Chrome extension context, we need to use importScripts or similar
-  if (typeof importScripts !== 'undefined') {
+  // Check if we're in a build environment with process.env available
+  if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
+    GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    log('Loaded API key from environment variable');
+  } else if (typeof importScripts !== 'undefined') {
     // Service worker context - configuration should be passed via message
-    log('Running in service worker context');
+    log('Running in service worker context - API key will be set via setApiKey function');
   } else if (typeof window !== 'undefined') {
     // Browser context - try to load config if available
     if (window.config) {
@@ -62,11 +65,23 @@ async function analyzeTextWithGemini(text) {
           }]
         }],
         generationConfig: {
-          temperature: 0.1,
-          topK: 32,
-          topP: 1,
-          maxOutputTokens: 1024,
-        }
+          temperature: 0.0,  // More deterministic responses
+          topK: 1,           // More focused responses
+          topP: 0.8,         // Slightly more focused
+          maxOutputTokens: 512,  // Shorter, more focused responses
+          candidateCount: 1,     // Single response
+          stopSequences: []      // No stop sequences
+        },
+        safetySettings: [
+          {
+            category: "HARM_CATEGORY_HARASSMENT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          },
+          {
+            category: "HARM_CATEGORY_HATE_SPEECH", 
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          }
+        ]
       })
     });
 
@@ -114,28 +129,51 @@ async function analyzeTextWithGemini(text) {
  * @returns {string} - The formatted prompt
  */
 function createEventExtractionPrompt(text) {
-  return `Analyze the following text and extract event information. Return ONLY a JSON object with the following structure:
+  const currentTime = new Date().toISOString();
+  const currentDate = new Date().toISOString().split('T')[0];
+  
+  return `You are an expert event extraction AI. Extract calendar event information from the given text and return ONLY a valid JSON object.
 
+CURRENT CONTEXT:
+- Current date/time: ${currentTime}
+- Today's date: ${currentDate}
+- Timezone: UTC
+
+REQUIRED JSON FORMAT:
 {
-  "title": "Event title",
-  "start_time": "YYYY-MM-DDTHH:MM:SS",
-  "end_time": "YYYY-MM-DDTHH:MM:SS (optional)",
-  "description": "Event description",
+  "title": "Event title (required)",
+  "start_time": "YYYY-MM-DDTHH:MM:SS.000Z (required, ISO format)",
+  "end_time": "YYYY-MM-DDTHH:MM:SS.000Z (optional, ISO format)",
+  "description": "Event description (optional)",
   "location": "Event location (optional)"
 }
 
-Rules:
-1. If no clear event is found, return null
-2. Use current date/time as reference: ${new Date().toISOString()}
-3. For relative dates (tomorrow, next week), calculate the actual date
-4. If no time is specified, use 9:00 AM as default
-5. If no end time is specified, assume 1 hour duration
-6. Extract location if mentioned
-7. Keep description concise but informative
+EXTRACTION RULES:
+1. If NO clear event is found, return: null
+2. For relative dates, calculate actual dates:
+   - "tomorrow" = next day at specified time
+   - "next Monday/Tuesday/etc" = next occurrence of that day
+   - "this Friday" = this week's Friday
+   - "next week" = 7 days from now
+3. For times without AM/PM, assume 24-hour format
+4. Default time: 9:00 AM if no time specified
+5. Default duration: 1 hour if no end time specified
+6. Extract location from text or infer from context
+7. Make title descriptive and clear
 
-Text to analyze: "${text}"
+EXAMPLES:
+Input: "Team meeting tomorrow at 2 PM"
+Output: {"title": "Team meeting", "start_time": "2024-01-16T14:00:00.000Z", "end_time": "2024-01-16T15:00:00.000Z"}
 
-Return only the JSON object, no other text:`;
+Input: "Doctor appointment next Friday 10 AM at City Hospital"
+Output: {"title": "Doctor appointment", "start_time": "2024-01-19T10:00:00.000Z", "end_time": "2024-01-19T11:00:00.000Z", "location": "City Hospital"}
+
+Input: "Lunch with John"
+Output: {"title": "Lunch with John", "start_time": "2024-01-15T09:00:00.000Z", "end_time": "2024-01-15T10:00:00.000Z"}
+
+TEXT TO ANALYZE: "${text}"
+
+Return ONLY the JSON object (no markdown, no explanations):`;
 }
 
 /**
@@ -145,34 +183,67 @@ Return only the JSON object, no other text:`;
  */
 function parseGeminiResponse(responseText) {
   try {
+    log('Raw Gemini response:', responseText);
+    
     // Clean the response text (remove markdown formatting if present)
     let cleanText = responseText.trim();
     
+    // Remove common prefixes that Gemini might add
+    const prefixesToRemove = [
+      /^Here's the extracted event information:\s*/i,
+      /^Here is the extracted event information:\s*/i,
+      /^Event extracted:\s*/i,
+      /^Extracted event:\s*/i,
+      /^JSON:\s*/i,
+      /^Response:\s*/i
+    ];
+    
+    for (const prefix of prefixesToRemove) {
+      cleanText = cleanText.replace(prefix, '');
+    }
+    
     // Remove markdown code blocks if present
-    if (cleanText.startsWith('```json')) {
-      cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (cleanText.startsWith('```')) {
-      cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/, '');
+    if (cleanText.includes('```json')) {
+      const jsonMatch = cleanText.match(/```json\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        cleanText = jsonMatch[1].trim();
+      }
+    } else if (cleanText.includes('```')) {
+      const codeMatch = cleanText.match(/```\s*([\s\S]*?)\s*```/);
+      if (codeMatch) {
+        cleanText = codeMatch[1].trim();
+      }
     }
 
-    // Try to extract JSON from the response
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+    // Try to extract JSON from the response using multiple patterns
+    let jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      // Try to find JSON-like structure even if not properly formatted
+      jsonMatch = cleanText.match(/\{[^}]*"title"[^}]*\}/);
+    }
+    
     if (jsonMatch) {
       cleanText = jsonMatch[0];
     }
 
     log('Cleaned response text for parsing:', cleanText);
 
-    const eventData = JSON.parse(cleanText);
-    
-    // Validate the response
-    if (eventData === null) {
+    // Handle case where Gemini returns null
+    if (cleanText.toLowerCase().includes('null') || cleanText.trim() === 'null') {
       log('Gemini determined no event was found');
       return null;
     }
 
-    if (!eventData.title) {
-      log('ERROR: No title in Gemini response');
+    const eventData = JSON.parse(cleanText);
+    
+    // Validate the response
+    if (eventData === null || eventData === undefined) {
+      log('Gemini determined no event was found');
+      return null;
+    }
+
+    if (!eventData.title || typeof eventData.title !== 'string' || eventData.title.trim() === '') {
+      log('ERROR: No valid title in Gemini response');
       return null;
     }
 
@@ -188,19 +259,55 @@ function parseGeminiResponse(responseText) {
     // Validate start_time format
     if (validatedEvent.start_time) {
       try {
-        new Date(validatedEvent.start_time);
+        const startDate = new Date(validatedEvent.start_time);
+        if (isNaN(startDate.getTime())) {
+          log('ERROR: Invalid start_time format:', validatedEvent.start_time);
+          return null;
+        }
+        // Ensure it's in ISO format
+        validatedEvent.start_time = startDate.toISOString();
       } catch (e) {
         log('ERROR: Invalid start_time format:', validatedEvent.start_time);
         return null;
       }
     }
 
-    log('Successfully parsed and validated event data');
+    // Validate end_time format if present
+    if (validatedEvent.end_time) {
+      try {
+        const endDate = new Date(validatedEvent.end_time);
+        if (isNaN(endDate.getTime())) {
+          log('WARNING: Invalid end_time format, removing:', validatedEvent.end_time);
+          validatedEvent.end_time = null;
+        } else {
+          validatedEvent.end_time = endDate.toISOString();
+        }
+      } catch (e) {
+        log('WARNING: Invalid end_time format, removing:', validatedEvent.end_time);
+        validatedEvent.end_time = null;
+      }
+    }
+
+    log('Successfully parsed and validated event data:', validatedEvent);
     return validatedEvent;
 
   } catch (error) {
     log('ERROR parsing Gemini response:', error);
     log('Raw response was:', responseText);
+    
+    // Try to extract any useful information even if JSON parsing fails
+    const titleMatch = responseText.match(/"title"\s*:\s*"([^"]+)"/);
+    if (titleMatch) {
+      log('Attempting to extract partial event data');
+      return {
+        title: titleMatch[1],
+        start_time: null,
+        end_time: null,
+        description: titleMatch[1],
+        location: null
+      };
+    }
+    
     throw new Error(`Failed to parse Gemini response: ${error.message}`);
   }
 }
