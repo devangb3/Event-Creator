@@ -1,7 +1,50 @@
 // content.js
 
 let eventCreatorContainer = null;
+let isCreatingEvent = false; // block cleanup while creating
+let isEditingOpen = false;   // block cleanup while edit form is open
+let snackbarContainer = null;
+let outsideClickHandler = null; // to close on outside click
+let colorDropdownOpen = false;
+let reminderDropdownOpen = false;
 
+/* ------------------------------------------------------------------
+   THEME TOKENS
+   Deep magenta / plum (toward red) as main accent.
+------------------------------------------------------------------ */
+const PRIMARY_BG   = "rgba(109,40,91,0.92)"; // deep magenta/violet w/alpha
+const PRIMARY_DARK = "#4a044e";              // deeper plum for icons/text on white
+const CARD_SHADOW  = "0 24px 48px rgba(0,0,0,0.45)";
+const CARD_RADIUS  = "16px";
+const CARD_FONT =
+  "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+
+const CARD_MAX_WIDTH = "min(360px, 90vw)"; // shared width target for popup & snackbar
+
+/* Calendar-like colors */
+const COLOR_OPTIONS = [
+  { value: "default",   name: "Default",   hex: "#9ca3af" },
+  { value: "lavender",  name: "Lavender",  hex: "#a78bfa" },
+  { value: "sage",      name: "Sage",      hex: "#86efac" },
+  { value: "grape",     name: "Grape",     hex: "#c084fc" },
+  { value: "flamingo",  name: "Flamingo",  hex: "#fb7185" },
+  { value: "banana",    name: "Banana",    hex: "#facc15" },
+  { value: "tangerine", name: "Tangerine", hex: "#fb923c" },
+  { value: "peacock",   name: "Peacock",   hex: "#38bdf8" },
+  { value: "graphite",  name: "Graphite",  hex: "#6b7280" }
+];
+
+/* Reminder options in minutes before event */
+const REMINDER_OPTIONS = [
+  { value: "2880", label: "2 days before" },
+  { value: "1440", label: "1 day before" },
+  { value: "120",  label: "2 hours before" },
+  { value: "60",   label: "1 hour before" },
+  { value: "30",   label: "30 minutes before" },
+  { value: "10",   label: "10 minutes before" }
+];
+
+// --- util logging
 function log(msg, data = null) {
   const ts = new Date().toISOString();
   if (data !== null) {
@@ -10,24 +53,146 @@ function log(msg, data = null) {
     console.log(`[${ts}] CONTENT: ${msg}`);
   }
 }
-
 console.log(">>> CONTENT.JS ATTACHED <<<", window.location.href);
 
-// Message handler for popup and background script communication
+/* ------------------------------------------------------------------
+   SNACKBAR + POSITIONING
+   RULES:
+   - If popup/form is CLOSED -> snackbar sits in the bottom-right corner (16px).
+   - If popup/form is OPEN   -> snackbar moves UP above popup.
+   - Snackbar width matches popup width (up to 360px, responsive).
+   - Snackbar lines up with same right/bottom margin.
+------------------------------------------------------------------ */
+
+// Call this anytime popup open/close changes or when a snackbar is shown
+function updateSnackbarPosition() {
+  if (!snackbarContainer) return;
+
+  let baseBottomPx = 16;
+
+  if (eventCreatorContainer) {
+    const rect = eventCreatorContainer.getBoundingClientRect();
+    const popupHeight = rect.height || 0;
+    baseBottomPx = 16 + popupHeight + 8;
+  }
+
+  snackbarContainer.style.bottom = baseBottomPx + "px";
+  snackbarContainer.style.right  = "16px";
+  snackbarContainer.style.left   = "auto";
+}
+
+function ensureSnackbarContainer() {
+  if (!snackbarContainer) {
+    snackbarContainer = document.createElement("div");
+    snackbarContainer.id = "gemini-snackbar-wrapper";
+    document.body.appendChild(snackbarContainer);
+  }
+
+  snackbarContainer.style.cssText = `
+    position: fixed;
+    z-index: 1000000;
+    display: flex;
+    flex-direction: column-reverse; /* newest toast bottom */
+    align-items: flex-end;
+    gap: 8px;
+    pointer-events: none;
+    max-width: ${CARD_MAX_WIDTH};
+    width: ${CARD_MAX_WIDTH};
+    font-family: ${CARD_FONT};
+    box-sizing: border-box;
+  `;
+
+  updateSnackbarPosition();
+}
+
+function showSnackbar(message, type = "info") {
+  ensureSnackbarContainer();
+
+  const bg =
+    type === "error"   ? "#b91c1c" :
+    type === "success" ? "#065f46" :
+                          "#1f2937";
+
+  const snack = document.createElement("div");
+  snack.style.cssText = `
+    width: 100%;
+    max-width: 100%;
+    background: ${bg};
+    color: #fff;
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.4;
+    box-shadow: 0 16px 32px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    pointer-events: auto;
+    animation: fade-in-snack 0.2s ease-out forwards;
+    box-sizing: border-box;
+  `;
+
+  snack.innerHTML = `
+    <div style="flex:1; word-break:break-word; padding-right:12px;">
+      ${message}
+    </div>
+    <button style="
+      background:none;
+      border:none;
+      color:white;
+      font-size:16px;
+      line-height:1;
+      cursor:pointer;
+      padding:0;
+      flex-shrink:0;
+    ">×</button>
+  `;
+
+  const closeBtn = snack.querySelector("button");
+  closeBtn.addEventListener("click", () => {
+    if (snack && snack.parentNode) {
+      snack.parentNode.removeChild(snack);
+    }
+    updateSnackbarPosition();
+  });
+
+  snackbarContainer.appendChild(snack);
+
+  setTimeout(() => {
+    if (snack && snack.parentNode) {
+      snack.parentNode.removeChild(snack);
+    }
+    updateSnackbarPosition();
+  }, 3000);
+
+  updateSnackbarPosition();
+}
+
+// Inject snackbar keyframes once
+(function ensureSnackbarKeyframes() {
+  if (document.getElementById("gemini-snackbar-styles")) return;
+  const styleEl = document.createElement("style");
+  styleEl.id = "gemini-snackbar-styles";
+  styleEl.textContent = `
+    @keyframes fade-in-snack {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `;
+  document.head.appendChild(styleEl);
+})();
+
+/* ------------------------------------------------------------------
+   RUNTIME MESSAGE HANDLER
+------------------------------------------------------------------ */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request?.action === "createEvent" && typeof request.text === "string") {
-    log("BG requested createEvent", { textPreview: request.text.slice(0, 80) });
     showEventCreator(request.text);
     sendResponse({ success: true });
   } else if (request?.action === "getSelectedText") {
-    // Handle popup request for selected text
     const selectedText = window.getSelection().toString().trim();
-    log("Popup requested selected text", { 
-      textPreview: selectedText.slice(0, 80),
-      length: selectedText.length 
-    });
-    sendResponse({ 
-      success: true, 
+    sendResponse({
+      success: true,
       text: selectedText,
       hasSelection: selectedText.length > 0
     });
@@ -37,502 +202,908 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
-// Listen for mouseup anywhere in the page
+/* ------------------------------------------------------------------
+   HIGHLIGHT LISTENERS
+------------------------------------------------------------------ */
 document.addEventListener("mouseup", (e) => {
-  // Store mouse position for button placement
   window.lastMouseX = e.clientX;
   window.lastMouseY = e.clientY;
 
-  // If popup is already open AND mouseup happened inside it, do nothing
   if (eventCreatorContainer && eventCreatorContainer.contains(e.target)) {
-    log("mouseup inside popup -> ignore");
     return;
   }
 
   const selectedText = window.getSelection().toString().trim();
-
-  log("document mouseup", {
-    textPreview: selectedText.slice(0, 80),
-    len: selectedText.length,
-    mouseX: e.clientX,
-    mouseY: e.clientY
-  });
-
-  // Only trigger popup if real selection (>3 chars)
   if (selectedText && selectedText.length > 3) {
     showEventCreator(selectedText);
   }
 });
 
-log(">>> mouseup listener attached");
+document.addEventListener("selectionchange", () => {
+  const currentText = window.getSelection().toString().trim();
+  if (!currentText && eventCreatorContainer && !isCreatingEvent && !isEditingOpen) {
+    destroyPopup();
+  }
+});
 
-// Build + show small button near mouse pointer
+/* ------------------------------------------------------------------
+   STYLE HELPERS
+------------------------------------------------------------------ */
+
+// Bottom-right wrapper for popup/form
+function getOuterWrapperStyle() {
+  return `
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    max-width: ${CARD_MAX_WIDTH};
+    width: ${CARD_MAX_WIDTH};
+    box-sizing: border-box;
+    pointer-events: auto;
+    font-family: ${CARD_FONT};
+    z-index: 999999;
+  `;
+}
+
+// shared card style
+function getCardWrapperStyle() {
+  return `
+    background: ${PRIMARY_BG};
+    backdrop-filter: blur(12px) saturate(1.2);
+    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    border-radius: ${CARD_RADIUS};
+    box-shadow: ${CARD_SHADOW};
+    padding: 16px;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    color: #ffffff;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-family: ${CARD_FONT};
+    border: 1px solid rgba(255,255,255,0.22);
+    box-sizing: border-box;
+  `;
+}
+
+// header row (for floating bubble)
+function getHeaderRowStyle() {
+  return `
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: nowrap;
+  `;
+}
+
+// generic "X" button
+function getHeaderIconBtnStyle() {
+  return `
+    background:none;
+    border:none;
+    color:#ffffff;
+    font-size:16px;
+    line-height:1;
+    cursor:pointer;
+    padding:4px 6px;
+    border-radius:6px;
+    flex-shrink:0;
+  `;
+}
+
+// pill CTA buttons
+function getWhiteCtaButtonStyle() {
+  return `
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid rgba(74,4,78,0.25);
+    background: #ffffff;
+    cursor: pointer;
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.2;
+    font-weight: 600;
+    color: ${PRIMARY_DARK};
+    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+    text-align: center;
+    min-width: 0;
+    max-width: 100%;
+  `;
+}
+
+// text/inputs
+function getInputStyle() {
+  return `
+    width: 100%;
+    max-width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.4;
+    box-sizing: border-box;
+    color: #111827;
+    background: #ffffff;
+    font-family: ${CARD_FONT};
+  `;
+}
+
+// dropdown trigger button (color + reminder)
+function getSelectButtonStyle() {
+  return `
+    width: 100%;
+    max-width: 100%;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background:#ffffff;
+    color:#111827;
+    font-size:14px;
+    line-height:1.4;
+    cursor:pointer;
+    font-family:${CARD_FONT};
+    box-sizing:border-box;
+  `;
+}
+
+// dropdown menu popover
+function getDropdownMenuStyle() {
+  return `
+    position:absolute;
+    bottom:100%;
+    left:0;
+    transform:translateY(-8px);
+    background:#ffffff;
+    color:#111827;
+    border:1px solid #d1d5db;
+    border-radius:8px;
+    box-shadow:0 20px 40px rgba(0,0,0,0.4);
+    padding:8px;
+    display:flex;
+    flex-direction:column;
+    max-height:180px;
+    overflow-y:auto;
+    min-width:180px;
+    z-index:1000001;
+    box-sizing:border-box;
+  `;
+}
+
+// dropdown item
+function getDropdownItemStyle() {
+  return `
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 10px;
+    border-radius:6px;
+    font-size:13px;
+    line-height:1.3;
+    font-weight:500;
+    color:#111827;
+    cursor:pointer;
+  `;
+}
+function getDropdownItemHoverStyle() {
+  return "background:#f3f4f6;";
+}
+
+// labels
+function getLabelStyle() {
+  return `
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: #ffe4f1;
+    margin-bottom: 6px;
+    line-height:1.3;
+  `;
+}
+
+// tiny colored circle
+function colorDot(hex) {
+  return `
+    <span style="
+      width:12px;
+      height:12px;
+      border-radius:9999px;
+      background:${hex};
+      display:inline-block;
+      flex-shrink:0;
+      border:1px solid rgba(0,0,0,0.2);
+    "></span>
+  `;
+}
+
+// hover lift on pill CTAs
+function lift(btn) {
+  btn.style.boxShadow = "0 12px 24px rgba(0,0,0,0.25)";
+  btn.style.transform = "translateY(-1px)";
+}
+function unlift(btn) {
+  btn.style.boxShadow = "0 8px 16px rgba(0,0,0,0.15)";
+  btn.style.transform = "translateY(0)";
+}
+
+/* ------------------------------------------------------------------
+   CLICK OUTSIDE HANDLER (closes popup/form)
+------------------------------------------------------------------ */
+function attachOutsideClickToClose() {
+  detachOutsideClickToClose();
+  outsideClickHandler = (evt) => {
+    if (!eventCreatorContainer) return;
+
+    if (eventCreatorContainer.contains(evt.target)) return;
+
+    const colorMenu = eventCreatorContainer.querySelector("#colorDropdownMenu");
+    const reminderMenu = eventCreatorContainer.querySelector("#reminderDropdownMenu");
+
+    const clickedInColorMenu =
+      colorMenu && colorMenu.contains(evt.target);
+    const clickedInReminderMenu =
+      reminderMenu && reminderMenu.contains(evt.target);
+
+    if (clickedInColorMenu || clickedInReminderMenu) return;
+
+    destroyPopup();
+  };
+  document.addEventListener("mousedown", outsideClickHandler, true);
+}
+
+function detachOutsideClickToClose() {
+  if (outsideClickHandler) {
+    document.removeEventListener("mousedown", outsideClickHandler, true);
+    outsideClickHandler = null;
+  }
+}
+
+/* ------------------------------------------------------------------
+   FLOATING ACTION BAR
+------------------------------------------------------------------ */
 function showEventCreator(selectedText) {
-  log("showEventCreator called", { textPreview: selectedText.slice(0, 80) });
+  isEditingOpen = false;
 
-  // clean existing popup
   if (eventCreatorContainer) {
     eventCreatorContainer.remove();
     eventCreatorContainer = null;
   }
 
-  // Get mouse position from the last mouseup event
-  const mouseX = window.lastMouseX || 0;
-  const mouseY = window.lastMouseY || 0;
-
   eventCreatorContainer = document.createElement("div");
   eventCreatorContainer.id = "gemini-event-creator";
-  eventCreatorContainer.style.cssText = `
-    position: fixed;
-    top: ${mouseY + 10}px;
-    left: ${mouseX + 10}px;
-    z-index: 999999;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    pointer-events: auto;
-  `;
+  eventCreatorContainer.style.cssText = getOuterWrapperStyle();
 
-  // Create a small floating button
   eventCreatorContainer.innerHTML = `
-    <div class="event-creator-button" style="
-      background: #111827;
-      color: white;
-      border: none;
-      border-radius: 20px;
-      padding: 8px 16px;
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: all 0.2s ease;
-      white-space: nowrap;
-    ">
-      <span style="font-size: 14px;">📅</span>
-      <span>Create Event</span>
+    <div class="gemini-action-card" style="${getCardWrapperStyle()}">
+      <div class="gemini-header" style="${getHeaderRowStyle()}">
+        <div style="flex:1; min-width:0;">
+          <div style="
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffffff;
+            line-height:1.3;
+            letter-spacing:-0.03em;
+            word-break:break-word;
+          ">
+            Create calendar event
+          </div>
+        </div>
+
+        <button class="gemini-close-btn" style="${getHeaderIconBtnStyle()}">
+          ✕
+        </button>
+      </div>
+
+      <div class="gemini-action-row" style="
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        width: 100%;
+        padding: 0 4px;
+        margin-top: 4px;
+      ">
+        <button class="gemini-quick-add-btn" style="${getWhiteCtaButtonStyle()}">
+          <span style="white-space:nowrap; color:${PRIMARY_DARK};">Quick Create</span>
+        </button>
+
+        <button class="gemini-edit-btn" style="${getWhiteCtaButtonStyle()}">
+          <span style="white-space:nowrap; color:${PRIMARY_DARK};">Edit & Create</span>
+        </button>
+      </div>
     </div>
   `;
 
   document.body.appendChild(eventCreatorContainer);
-  log("Small button injected at position:", { x: mouseX + 10, y: mouseY + 10 });
 
-  const button = eventCreatorContainer.querySelector(".event-creator-button");
+  const quickAddBtn = eventCreatorContainer.querySelector(".gemini-quick-add-btn");
+  const editBtn    = eventCreatorContainer.querySelector(".gemini-edit-btn");
+  const closeBtn   = eventCreatorContainer.querySelector(".gemini-close-btn");
 
-  // Add hover effect
-  button.addEventListener("mouseenter", () => {
-    button.style.background = "#1f2937";
-    button.style.transform = "translateY(-1px)";
-    button.style.boxShadow = "0 6px 16px rgba(0,0,0,0.4)";
-  });
+  quickAddBtn.addEventListener("mouseenter", () => lift(quickAddBtn));
+  quickAddBtn.addEventListener("mouseleave", () => unlift(quickAddBtn));
+  editBtn.addEventListener("mouseenter", () => lift(editBtn));
+  editBtn.addEventListener("mouseleave", () => unlift(editBtn));
 
-  button.addEventListener("mouseleave", () => {
-    button.style.background = "#111827";
-    button.style.transform = "translateY(0)";
-    button.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
-  });
-
-  // Handle button click
-  button.addEventListener("click", (e) => {
+  quickAddBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    log("Create Event button clicked");
     handleCreateEvent(selectedText);
   });
 
-  // Handle right-click to show editable form
-  button.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
+  editBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    log("Right-click on Create Event button");
     showEditableForm(selectedText);
   });
 
-  // Auto-hide after 5 seconds
-  setTimeout(() => {
-    if (eventCreatorContainer) {
-      destroyPopup();
-    }
-  }, 5000);
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    destroyPopup();
+  });
+
+  attachOutsideClickToClose();
+  updateSnackbarPosition();
 }
 
-// close popup + clear highlight so it won't reopen immediately
+/* ------------------------------------------------------------------
+   DESTROY POPUP
+------------------------------------------------------------------ */
 function destroyPopup() {
-  log("destroyPopup called");
-
   if (eventCreatorContainer) {
     eventCreatorContainer.remove();
     eventCreatorContainer = null;
   }
+  isEditingOpen = false;
+  detachOutsideClickToClose();
 
-  // const sel = window.getSelection();
-  // if (sel && sel.removeAllRanges) {
-  //   sel.removeAllRanges();
-  // }
-
-  log("Popup removed + selection cleared");
+  updateSnackbarPosition();
 }
 
-// Show editable form for event details
+/* ------------------------------------------------------------------
+   EDIT FORM CARD
+   - Only X in header.
+   - Color + Reminder on ONE LINE, no helper text under them.
+   - Footer Back + Save.
+------------------------------------------------------------------ */
 function showEditableForm(selectedText) {
-  log("showEditableForm called", { textPreview: selectedText.slice(0, 80) });
+  isEditingOpen = true;
 
-  // Clean existing popup
   if (eventCreatorContainer) {
     eventCreatorContainer.remove();
     eventCreatorContainer = null;
   }
-
-  // Get mouse position
-  const mouseX = window.lastMouseX || 0;
-  const mouseY = window.lastMouseY || 0;
 
   eventCreatorContainer = document.createElement("div");
   eventCreatorContainer.id = "gemini-event-creator";
-  eventCreatorContainer.style.cssText = `
-    position: fixed;
-    top: ${mouseY + 10}px;
-    left: ${mouseX + 10}px;
-    z-index: 999999;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    pointer-events: auto;
-  `;
+  eventCreatorContainer.style.cssText = getOuterWrapperStyle();
 
-  // Create editable form
+  const colorItemsHtml = COLOR_OPTIONS.map(opt => {
+    return `
+      <div class="color-item"
+           data-color-value="${opt.value}"
+           data-color-hex="${opt.hex}"
+           data-color-name="${opt.name}"
+           style="${getDropdownItemStyle()}">
+        ${colorDot(opt.hex)}
+        <span style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${opt.name}</span>
+      </div>
+    `;
+  }).join("");
+
+  const reminderItemsHtml = REMINDER_OPTIONS.map(opt => {
+    return `
+      <div class="reminder-item"
+           data-reminder-value="${opt.value}"
+           data-reminder-label="${opt.label}"
+           style="${getDropdownItemStyle()}">
+        <span style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${opt.label}</span>
+      </div>
+    `;
+  }).join("");
+
+  const defaultColor = COLOR_OPTIONS[0];
+  const defaultReminder = REMINDER_OPTIONS[1];
+
   eventCreatorContainer.innerHTML = `
-    <div class="event-editor-form" style="
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-      padding: 20px;
-      min-width: 320px;
-      max-width: 400px;
-      border: 1px solid rgba(0,0,0,0.1);
-    ">
+    <div class="event-editor-form" style="${getCardWrapperStyle()}">
+
       <div class="form-header" style="
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 16px;
-        padding-bottom: 12px;
-        border-bottom: 1px solid #e5e7eb;
+        display:flex;
+        flex-wrap:nowrap;
+        justify-content:flex-end;
+        width:100%;
       ">
-        <h3 style="
-          margin: 0;
-          font-size: 16px;
-          font-weight: 600;
-          color: #1f2937;
-        ">Edit Event Details</h3>
         <button id="closeFormBtn" style="
-          background: none;
-          border: none;
-          font-size: 20px;
-          cursor: pointer;
-          color: #6b7280;
-          padding: 4px;
-          border-radius: 4px;
-        ">×</button>
+          ${getHeaderIconBtnStyle()}
+          font-size:16px;
+          padding:4px 6px;
+          line-height:1;
+        ">✕</button>
       </div>
 
-      <form id="eventForm">
-        <div class="form-group" style="margin-bottom: 16px;">
-          <label style="
-            display: block;
-            font-size: 12px;
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 6px;
-          ">Event Title *</label>
-          <input type="text" id="eventTitle" required style="
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            font-size: 14px;
-            box-sizing: border-box;
-          " placeholder="Enter event title">
+      <form id="eventForm" style="
+        display:flex;
+        flex-direction:column;
+        gap:16px;
+        width:100%;
+      ">
+
+        <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
+          <label style="${getLabelStyle()}">Event Title *</label>
+          <input
+            type="text"
+            id="eventTitle"
+            required
+            style="${getInputStyle()}"
+            placeholder="Enter event title"
+          >
         </div>
 
-        <div class="form-row" style="display: flex; gap: 12px; margin-bottom: 16px;">
-          <div class="form-group" style="flex: 1;">
-            <label style="
-              display: block;
-              font-size: 12px;
-              font-weight: 500;
-              color: #374151;
-              margin-bottom: 6px;
-            ">Start Time *</label>
-            <input type="datetime-local" id="startTime" required style="
-              width: 100%;
-              padding: 8px 12px;
-              border: 1px solid #d1d5db;
-              border-radius: 6px;
-              font-size: 14px;
-              box-sizing: border-box;
-            ">
+        <div class="form-row" style="
+          display:flex;
+          flex-wrap:wrap;
+          align-items:flex-start;
+          gap:12px;
+          width:100%;
+        ">
+          <div class="form-group" style="
+            flex:1 1 140px;
+            min-width:0;
+            display:flex;
+            flex-direction:column;
+          ">
+            <label style="${getLabelStyle()}">Start Time *</label>
+            <input
+              type="datetime-local"
+              id="startTime"
+              required
+              style="${getInputStyle()}"
+            >
           </div>
-          <div class="form-group" style="flex: 1;">
-            <label style="
-              display: block;
-              font-size: 12px;
-              font-weight: 500;
-              color: #374151;
-              margin-bottom: 6px;
-            ">End Time</label>
-            <input type="datetime-local" id="endTime" style="
-              width: 100%;
-              padding: 8px 12px;
-              border: 1px solid #d1d5db;
-              border-radius: 6px;
-              font-size: 14px;
-              box-sizing: border-box;
-            ">
+
+          <div class="form-group" style="
+            flex:1 1 140px;
+            min-width:0;
+            display:flex;
+            flex-direction:column;
+          ">
+            <label style="${getLabelStyle()}">End Time</label>
+            <input
+              type="datetime-local"
+              id="endTime"
+              style="${getInputStyle()}"
+            >
           </div>
         </div>
 
-        <div class="form-group" style="margin-bottom: 16px;">
-          <label style="
-            display: block;
-            font-size: 12px;
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 6px;
-          ">Description</label>
-          <textarea id="eventDescription" rows="3" style="
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            font-size: 14px;
-            resize: vertical;
-            box-sizing: border-box;
-            font-family: inherit;
-          " placeholder="Enter event description">${escapeHtml(selectedText)}</textarea>
+        <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
+          <label style="${getLabelStyle()}">Description</label>
+          <textarea
+            id="eventDescription"
+            rows="3"
+            style="${getInputStyle()} resize: vertical;"
+            placeholder="Enter event description"
+          >${escapeHtml(selectedText)}</textarea>
         </div>
 
-        <div class="form-group" style="margin-bottom: 20px;">
-          <label style="
-            display: block;
-            font-size: 12px;
-            font-weight: 500;
-            color: #374151;
-            margin-bottom: 6px;
-          ">Location</label>
-          <input type="text" id="eventLocation" style="
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 6px;
-            font-size: 14px;
-            box-sizing: border-box;
-          " placeholder="Enter event location">
+        <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
+          <label style="${getLabelStyle()}">Location</label>
+          <input
+            type="text"
+            id="eventLocation"
+            style="${getInputStyle()}"
+            placeholder="Enter event location"
+          >
+        </div>
+
+        <!-- Color + Reminder: same single row, no helper/hint lines -->
+        <div class="form-line-row" style="
+          display:flex;
+          flex-wrap:wrap;
+          align-items:flex-start;
+          gap:16px;
+          width:100%;
+        ">
+          <!-- COLOR DROPDOWN -->
+          <div class="color-col" style="
+            flex:1 1 150px;
+            min-width:0;
+            display:flex;
+            flex-direction:column;
+            position:relative;
+          ">
+            <label style="${getLabelStyle()}">Color</label>
+
+            <button
+              type="button"
+              id="colorDropdownToggle"
+              style="${getSelectButtonStyle()}"
+            >
+              <span id="colorDropdownSelected" style="
+                flex:1;
+                min-width:0;
+                display:flex;
+                align-items:center;
+                gap:8px;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                line-height:1.3;
+              ">
+                ${colorDot(defaultColor.hex)}
+                <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultColor.name}</span>
+              </span>
+              <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
+            </button>
+
+            <div
+              id="colorDropdownMenu"
+              style="${getDropdownMenuStyle()} display:none;"
+            >
+              ${colorItemsHtml}
+            </div>
+
+            <input type="hidden" id="eventColor" value="${defaultColor.value}">
+          </div>
+
+          <!-- REMINDER DROPDOWN -->
+          <div class="reminder-col" style="
+            flex:1 1 150px;
+            min-width:0;
+            display:flex;
+            flex-direction:column;
+            position:relative;
+          ">
+            <label style="${getLabelStyle()}">Reminder</label>
+
+            <button
+              type="button"
+              id="reminderDropdownToggle"
+              style="${getSelectButtonStyle()}"
+            >
+              <span id="reminderDropdownSelected" style="
+                flex:1;
+                min-width:0;
+                display:flex;
+                align-items:center;
+                gap:8px;
+                white-space:nowrap;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                line-height:1.3;
+              ">
+                <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultReminder.label}</span>
+              </span>
+              <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
+            </button>
+
+            <div
+              id="reminderDropdownMenu"
+              style="${getDropdownMenuStyle()} display:none;"
+            >
+              ${reminderItemsHtml}
+            </div>
+
+            <input type="hidden" id="eventReminderMinutes" value="${defaultReminder.value}">
+          </div>
         </div>
 
         <div class="form-actions" style="
-          display: flex;
-          gap: 12px;
-          justify-content: flex-end;
+          display:flex;
+          flex-wrap:wrap;
+          row-gap:8px;
+          column-gap:12px;
+          justify-content:flex-end;
+          width:100%;
         ">
-          <button type="button" id="cancelBtn" style="
-            padding: 8px 16px;
-            border: 1px solid #d1d5db;
-            background: white;
-            color: #374151;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-          ">Cancel</button>
-          <button type="submit" id="createEventBtn" style="
-            padding: 8px 16px;
-            border: none;
-            background: #111827;
-            color: white;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            font-weight: 500;
-          ">Create Event</button>
+          <button
+            type="button"
+            id="backBtnFooter"
+            style="
+              ${getWhiteCtaButtonStyle()}
+              flex:0 1 auto;
+              font-size:13px;
+              padding:8px 12px;
+            "
+          >
+            <span style="color:${PRIMARY_DARK};">Back</span>
+          </button>
+
+          <button
+            type="submit"
+            id="createEventBtn"
+            style="
+              ${getWhiteCtaButtonStyle()}
+              flex:0 1 auto;
+              font-size:13px;
+              padding:8px 12px;
+            "
+          >
+            <span style="color:${PRIMARY_DARK};">Create</span>
+          </button>
         </div>
       </form>
-
-      <div id="formStatus" style="
-        margin-top: 12px;
-        padding: 8px 12px;
-        border-radius: 6px;
-        font-size: 12px;
-        display: none;
-      "></div>
     </div>
   `;
 
   document.body.appendChild(eventCreatorContainer);
-  log("Editable form injected");
 
-  // Set default values
+  // Default times (tomorrow 9–10)
   const now = new Date();
-  const defaultStart = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Tomorrow
+  const defaultStart = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   defaultStart.setHours(9, 0, 0, 0);
-  const defaultEnd = new Date(defaultStart.getTime() + 60 * 60 * 1000); // 1 hour later
+  const defaultEnd = new Date(defaultStart.getTime() + 60 * 60 * 1000);
 
-  document.getElementById('eventTitle').value = selectedText.slice(0, 50);
-  document.getElementById('startTime').value = defaultStart.toISOString().slice(0, 16);
-  document.getElementById('endTime').value = defaultEnd.toISOString().slice(0, 16);
+  document.getElementById("eventTitle").value = selectedText.slice(0, 50);
+  document.getElementById("startTime").value  = defaultStart.toISOString().slice(0, 16);
+  document.getElementById("endTime").value    = defaultEnd.toISOString().slice(0, 16);
 
-  // Add event listeners
-  const closeBtn = document.getElementById('closeFormBtn');
-  const cancelBtn = document.getElementById('cancelBtn');
-  const form = document.getElementById('eventForm');
-  const statusDiv = document.getElementById('formStatus');
+  // wire dropdowns
+  setupColorDropdown();
+  setupReminderDropdown();
 
-  // Close form
-  closeBtn.addEventListener('click', () => destroyPopup());
-  cancelBtn.addEventListener('click', () => destroyPopup());
+  // form actions
+  const closeBtn      = document.getElementById("closeFormBtn");
+  const backBtnFooter = document.getElementById("backBtnFooter");
+  const form          = document.getElementById("eventForm");
 
-  // Handle form submission
-  form.addEventListener('submit', (e) => {
+  closeBtn.addEventListener("click", () => {
+    destroyPopup();
+  });
+
+  backBtnFooter.addEventListener("click", () => {
+    isEditingOpen = false;
+    showEventCreator(selectedText);
+  });
+
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
     handleFormSubmission();
   });
 
-  // Auto-focus on title field
-  document.getElementById('eventTitle').focus();
+  document.getElementById("eventTitle").focus();
+
+  attachOutsideClickToClose();
+  updateSnackbarPosition();
 }
 
-// Handle form submission
+/* ------------------------------------------------------------------
+   COLOR DROPDOWN LOGIC
+------------------------------------------------------------------ */
+function setupColorDropdown() {
+  const toggleBtn   = eventCreatorContainer.querySelector("#colorDropdownToggle");
+  const menuEl      = eventCreatorContainer.querySelector("#colorDropdownMenu");
+  const selectedEl  = eventCreatorContainer.querySelector("#colorDropdownSelected");
+  const hiddenInput = eventCreatorContainer.querySelector("#eventColor");
+
+  if (!toggleBtn || !menuEl || !selectedEl || !hiddenInput) return;
+
+  toggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const isHidden = menuEl.style.display === "none";
+    menuEl.style.display = isHidden ? "flex" : "none";
+    colorDropdownOpen = isHidden;
+    if (isHidden) {
+      closeReminderDropdown();
+    }
+  });
+
+  const items = menuEl.querySelectorAll(".color-item");
+  items.forEach((item) => {
+    item.addEventListener("mouseenter", () => {
+      item.style.cssText = getDropdownItemStyle() + getDropdownItemHoverStyle();
+    });
+    item.addEventListener("mouseleave", () => {
+      item.style.cssText = getDropdownItemStyle();
+    });
+
+    item.addEventListener("click", () => {
+      const val  = item.getAttribute("data-color-value");
+      const hex  = item.getAttribute("data-color-hex");
+      const name = item.getAttribute("data-color-name");
+
+      hiddenInput.value = val;
+      selectedEl.innerHTML = `
+        ${colorDot(hex)}
+        <span style="font-size:14px; color:#111827; line-height:1.3;">${name}</span>
+      `;
+      menuEl.style.display = "none";
+      colorDropdownOpen = false;
+    });
+  });
+}
+
+function closeColorDropdown() {
+  const menuEl = eventCreatorContainer?.querySelector("#colorDropdownMenu");
+  if (!menuEl) return;
+  menuEl.style.display = "none";
+  colorDropdownOpen = false;
+}
+
+/* ------------------------------------------------------------------
+   REMINDER DROPDOWN LOGIC
+------------------------------------------------------------------ */
+function setupReminderDropdown() {
+  const toggleBtn   = eventCreatorContainer.querySelector("#reminderDropdownToggle");
+  const menuEl      = eventCreatorContainer.querySelector("#reminderDropdownMenu");
+  const selectedEl  = eventCreatorContainer.querySelector("#reminderDropdownSelected");
+  const hiddenInput = eventCreatorContainer.querySelector("#eventReminderMinutes");
+
+  if (!toggleBtn || !menuEl || !selectedEl || !hiddenInput) return;
+
+  toggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const isHidden = menuEl.style.display === "none";
+    menuEl.style.display = isHidden ? "flex" : "none";
+    reminderDropdownOpen = isHidden;
+    if (isHidden) {
+      closeColorDropdown();
+    }
+  });
+
+  const items = menuEl.querySelectorAll(".reminder-item");
+  items.forEach((item) => {
+    item.addEventListener("mouseenter", () => {
+      item.style.cssText = getDropdownItemStyle() + getDropdownItemHoverStyle();
+    });
+    item.addEventListener("mouseleave", () => {
+      item.style.cssText = getDropdownItemStyle();
+    });
+
+    item.addEventListener("click", () => {
+      const val   = item.getAttribute("data-reminder-value");
+      const label = item.getAttribute("data-reminder-label");
+
+      hiddenInput.value = val;
+      selectedEl.innerHTML = `
+        <span style="
+          width:12px;
+          height:12px;
+          border-radius:9999px;
+          background:#ffffff;
+          border:1px solid #9ca3af;
+          flex-shrink:0;
+        "></span>
+        <span style="font-size:14px; color:#111827; line-height:1.3;">${label}</span>
+      `;
+
+      menuEl.style.display = "none";
+      reminderDropdownOpen = false;
+    });
+  });
+}
+
+function closeReminderDropdown() {
+  const menuEl = eventCreatorContainer?.querySelector("#reminderDropdownMenu");
+  if (!menuEl) return;
+  menuEl.style.display = "none";
+  reminderDropdownOpen = false;
+}
+
+/* ------------------------------------------------------------------
+   FORM SUBMIT (EDIT FLOW)
+------------------------------------------------------------------ */
 async function handleFormSubmission() {
-  const title = document.getElementById('eventTitle').value.trim();
-  const startTime = document.getElementById('startTime').value;
-  const endTime = document.getElementById('endTime').value;
-  const description = document.getElementById('eventDescription').value.trim();
-  const location = document.getElementById('eventLocation').value.trim();
-  const statusDiv = document.getElementById('formStatus');
-  const submitBtn = document.getElementById('createEventBtn');
+  const titleEl         = document.getElementById("eventTitle");
+  const startTimeEl     = document.getElementById("startTime");
+  const endTimeEl       = document.getElementById("endTime");
+  const descEl          = document.getElementById("eventDescription");
+  const locEl           = document.getElementById("eventLocation");
+  const colorEl         = document.getElementById("eventColor");
+  const reminderEl      = document.getElementById("eventReminderMinutes");
+  const submitBtn       = document.getElementById("createEventBtn");
+
+  const title           = titleEl.value.trim();
+  const startTime       = startTimeEl.value;
+  const endTime         = endTimeEl.value;
+  const description     = descEl.value.trim();
+  const location        = locEl.value.trim();
+  const color           = colorEl.value;
+  const reminderMinutes = parseInt(reminderEl.value, 10);
 
   if (!title) {
-    showFormStatus('Please enter an event title', 'error');
+    showSnackbar("Add a title", "error");
     return;
   }
-
   if (!startTime) {
-    showFormStatus('Please enter a start time', 'error');
+    showSnackbar("Add a start time", "error");
     return;
   }
 
-  // Disable submit button
   submitBtn.disabled = true;
-  submitBtn.textContent = 'Creating...';
-  showFormStatus('Creating event...', 'info');
+  submitBtn.style.opacity = "0.6";
+  submitBtn.style.cursor = "not-allowed";
 
   try {
-    // Create event object from form data
+    isCreatingEvent = true;
+
     const eventData = {
       title: title,
       start_time: new Date(startTime).toISOString(),
       end_time: endTime ? new Date(endTime).toISOString() : null,
       description: description || title,
-      location: location || null
+      location: location || null,
+      color: color || "default",
+      reminder_minutes: isNaN(reminderMinutes) ? null : reminderMinutes
     };
 
-    // Send to background script for calendar creation
     const response = await chrome.runtime.sendMessage({
-      action: 'createEventFromData',
+      action: "createEventFromData",
       eventData: eventData
     });
 
+    destroyPopup(); // popup gone before snackbar
+
     if (response && response.success) {
-      showFormStatus(`Event "${response.eventTitle}" created successfully!`, 'success');
-      setTimeout(() => {
-        destroyPopup();
-      }, 2000);
+      showSnackbar("Event saved", "success");
     } else {
-      throw new Error(response?.error || 'Failed to create event');
+      throw new Error(response?.error || "Failed to create event");
     }
-
   } catch (error) {
-    log('Error creating event from form:', error);
-    showFormStatus('Error creating event: ' + error.message, 'error');
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Create Event';
+    log("Error creating event from form:", error);
+    destroyPopup();
+    showSnackbar("Couldn't save event", "error");
+  } finally {
+    isCreatingEvent = false;
+    isEditingOpen = false;
   }
 }
 
-// Show form status message
-function showFormStatus(message, type) {
-  const statusDiv = document.getElementById('formStatus');
-  statusDiv.textContent = message;
-  statusDiv.className = `form-status ${type}`;
-  statusDiv.style.display = 'block';
-  
-  if (type === 'success') {
-    statusDiv.style.background = '#ecfdf5';
-    statusDiv.style.color = '#065f46';
-    statusDiv.style.border = '1px solid #10b98133';
-  } else if (type === 'error') {
-    statusDiv.style.background = '#fef2f2';
-    statusDiv.style.color = '#991b1b';
-    statusDiv.style.border = '1px solid #fca5a533';
-  } else {
-    statusDiv.style.background = '#eff6ff';
-    statusDiv.style.color = '#1e40af';
-    statusDiv.style.border = '1px solid #3b82f633';
-  }
-}
-
-// ask background.js to parse the event and build calendar link
+/* ------------------------------------------------------------------
+   QUICK ADD FLOW
+------------------------------------------------------------------ */
 async function handleCreateEvent(text) {
-  const button = eventCreatorContainer?.querySelector(".event-creator-button");
-  
-  if (!button) {
-    log("ERROR: event creator button missing?");
+  if (!eventCreatorContainer) {
     return;
   }
 
-  // Update button to show loading state
-  button.innerHTML = `
-    <span style="font-size: 14px;">⏳</span>
-    <span>Creating...</span>
-  `;
-  button.style.background = "#6b7280";
-  button.style.cursor = "not-allowed";
+  const quickAddBtn = eventCreatorContainer.querySelector(".gemini-quick-add-btn");
+  const editBtn     = eventCreatorContainer.querySelector(".gemini-edit-btn");
+
+  if (quickAddBtn) {
+    quickAddBtn.style.opacity = "0.6";
+    quickAddBtn.style.cursor = "not-allowed";
+    quickAddBtn.disabled = true;
+  }
+  if (editBtn) {
+    editBtn.style.opacity = "0.6";
+    editBtn.style.cursor = "not-allowed";
+    editBtn.disabled = true;
+  }
 
   try {
+    isCreatingEvent = true;
+
     const resp = await sendAnalyzeText(text);
 
+    destroyPopup();
+
     if (resp?.success) {
-      // Show success state
-      button.innerHTML = `
-        <span style="font-size: 14px;">✅</span>
-        <span>Created!</span>
-      `;
-      button.style.background = "#10b981";
-      
-      // Auto-hide after 2 seconds
-      setTimeout(() => {
-        destroyPopup();
-      }, 2000);
+      showSnackbar("Event created", "success");
     } else {
       throw new Error(resp?.error || "Failed to create event");
     }
   } catch (err) {
-    // Show error state
-    button.innerHTML = `
-      <span style="font-size: 14px;">❌</span>
-      <span>Error</span>
-    `;
-    button.style.background = "#ef4444";
-    
-    // Reset after 3 seconds
-    setTimeout(() => {
-      button.innerHTML = `
-        <span style="font-size: 14px;">📅</span>
-        <span>Create Event</span>
-      `;
-      button.style.background = "#111827";
-      button.style.cursor = "pointer";
-    }, 3000);
+    destroyPopup();
+    showSnackbar("Couldn't create", "error");
+  } finally {
+    isCreatingEvent = false;
+    isEditingOpen = false;
   }
 }
 
-// background messaging helper
+/* ------------------------------------------------------------------
+   BACKGROUND MESSAGE HELPER
+------------------------------------------------------------------ */
 function sendAnalyzeText(text) {
   return new Promise((resolve, reject) => {
     const ts = new Date().toISOString();
@@ -548,33 +1119,27 @@ function sendAnalyzeText(text) {
     }, 10000);
 
     try {
-      chrome.runtime.sendMessage(
-        { action: "analyzeText", text },
-        (resp) => {
-          clearTimeout(timeout);
+      chrome.runtime.sendMessage({ action: "analyzeText", text }, (resp) => {
+        clearTimeout(timeout);
 
-          const ts3 = new Date().toISOString();
-          console.log(`[${ts3}] CONTENT DEBUG: sendAnalyzeText callback fired`, {
-            resp,
-            lastError: chrome.runtime.lastError
-              ? chrome.runtime.lastError.message
-              : null,
-            timeoutFired
-          });
+        const ts3 = new Date().toISOString();
+        console.log(`[${ts3}] CONTENT DEBUG: sendAnalyzeText callback fired`, {
+          resp,
+          lastError: chrome.runtime.lastError
+            ? chrome.runtime.lastError.message
+            : null,
+          timeoutFired,
+        });
 
-          if (timeoutFired) {
-            // we already rejected, just ignore late callback
-            return;
-          }
+        if (timeoutFired) return;
 
-          if (chrome.runtime.lastError) {
-            reject(new Error("chrome.runtime.lastError: " + chrome.runtime.lastError.message));
-            return;
-          }
-
-          resolve(resp || { success: false, error: "No response" });
+        if (chrome.runtime.lastError) {
+          reject(new Error("chrome.runtime.lastError: " + chrome.runtime.lastError.message));
+          return;
         }
-      );
+
+        resolve(resp || { success: false, error: "No response" });
+      });
     } catch (err) {
       clearTimeout(timeout);
       const ts4 = new Date().toISOString();
@@ -584,7 +1149,9 @@ function sendAnalyzeText(text) {
   });
 }
 
-// escape user-provided HTML
+/* ------------------------------------------------------------------
+   HTML ESCAPER
+------------------------------------------------------------------ */
 function escapeHtml(str) {
   return str.replace(/[&<>"']/g, (m) =>
     ({
