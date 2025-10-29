@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "vite build && cp manifest.json dist/ && cp content.css dist/ && cp popup.html dist/ && cp popup.js dist/ && mkdir -p dist/services && cp -r services/. dist/services/",
+    "build": "vite build",
     "build:extension": "npm run build",
     "serve:nano": "npx --yes http-server test_nano -p 8080 -c-1"
   },
