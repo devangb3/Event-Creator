@@ -6,7 +6,7 @@
   "scripts": {
     "build": "vite build",
     "build:extension": "npm run build",
-    "serve:nano": "npx --yes http-server test_nano -p 8080 -c-1"
+    "serve:nano": "npx --yes http-server test_nano -p 8081 -c-1"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -1,5 +1,4 @@
 // background.js
-
 // Bring in auth logic (makes self.Auth available)
 importScripts('auth.js');
 import anyDateParser from './node_modules/any-date-parser/dist/index.mjs';
@@ -170,12 +169,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           rawEvent.start_date,
           rawEvent.start_time
         );
+        console.log("startISo",startIso)
+
 
         const endIsoCandidate = buildIsoDateTime(
           rawEvent.end_date || rawEvent.start_date,
           rawEvent.end_time
         );
-
+        console.log("endIsoCandidate",endIsoCandidate)
         const endIso =
           endIsoCandidate ||
           (startIso ? addOneHourIso(startIso) : null);
@@ -517,35 +518,21 @@ function formatForCalendar(d) {
 }
 
 // Build full ISO timestamp ("2025-10-29T00:00:00.000Z") from date + time strings
-function buildIsoDateTime(dateStr, timeStr) {
-  // Example dateStr: "10/29/2025"
-  // Example timeStr: "00:00" or "1:00 PM"
+function buildIsoDateTime(dateStr, timeStr, year) {
   if (!dateStr || !timeStr) return null;
 
-  const parsed = anyDateParser.attempt(`${dateStr} ${timeStr}`);
-  if (
-    !parsed ||
-    parsed.year == null ||
-    parsed.month == null ||
-    parsed.day == null
-  ) {
+  // Combine date, year, and time for better parsing
+  const combined = `${dateStr} ${year || new Date().getFullYear()} ${timeStr}`;
+
+  const parsed = anyDateParser.attempt(combined);
+  if (!parsed || parsed.year == null || parsed.month == null || parsed.day == null) {
     return null;
   }
 
   const hour = parsed.hour ?? 0;
   const minute = parsed.minute ?? 0;
 
-  // create Date in local time, then ISO
-  const d = new Date(
-    parsed.year,
-    parsed.month - 1,
-    parsed.day,
-    hour,
-    minute,
-    0,
-    0
-  );
-
+  const d = new Date(parsed.year, parsed.month - 1, parsed.day, hour, minute, 0, 0);
   return d.toISOString();
 }
 
@@ -584,7 +571,15 @@ async function parseEventDetails(text) {
   });
 
   let prompt = `
-    The following text describes an event. Extract "title", "start_time", "start_date", "start_year", "end_time", "end_date", "end_year", "description", "timezone" and "location" of the event. Return only JSON as result.
+    The following text describes an event.
+    Extract the following fields from the user’s message:
+    - title
+    - start_date (format: DD MMM, e.g. "30 Oct"; remove ordinal suffixes like st/nd/rd/th)
+    - end_date (same format)
+    - start_time (24-hour format, e.g. "18:00")
+    - end_time (24-hour format, e.g. "19:00")
+    - year (use current year if not given)
+    Output a valid JSON object. 
 
     * If no year is provided, use the current year ${new Date().getFullYear()}.
     * If no date is provided, use the current date ${new Date().toLocaleDateString()}.
