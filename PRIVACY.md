@@ -224,8 +224,8 @@ Repository: https://github.com/devangb3/Event-Creator
 
 If you have questions, concerns, or requests regarding this privacy policy or your data:
 
-- **GitHub Issues:** [Your GitHub repository URL]/issues
-- **Email:** [Your contact email]
+- **GitHub Issues:** https://github.com/devangb3/Event-Creator/issues
+- **Email:** devangborkar3@gmail.com
 
 For Google account or calendar data concerns, please contact Google directly:
 - Google Privacy Help: https://support.google.com/privacy
