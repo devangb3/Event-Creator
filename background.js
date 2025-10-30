@@ -1,9 +1,8 @@
 // background.js
 // Bring in auth logic (makes self.Auth available)
 importScripts('auth.js');
-import anyDateParser from './node_modules/any-date-parser/dist/index.mjs';
-// Bring in Gemini / parsing helpers (must define analyzeTextWithPromptAPI,
-// fallbackParseEventFromText, LanguageModel, etc.)
+import anyDateParser from 'any-date-parser';
+
 importScripts('services/promptAPIService.js');
 
 function log(message, data = null) {
@@ -493,29 +492,6 @@ function addOneHourIso(isoString) {
   return d.toISOString();
 }
 
-// convert "pieces" → Date using any-date-parser
-function parseDatePieces(joined) {
-  const parsed = anyDateParser.attempt(joined);
-  return new Date(
-    parsed.year,
-    parsed.month - 1,
-    parsed.day,
-    parsed.hour,
-    parsed.minute
-  );
-}
-
-// format Date → yyyymmddThhmmss for ?dates= param
-function formatForCalendar(d) {
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const year = d.getFullYear();
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const seconds = String(d.getSeconds()).padStart(2, '0');
-
-  return [year, month, day, 'T', hours, minutes, seconds].join('');
-}
 
 // Build full ISO timestamp ("2025-10-29T00:00:00.000Z") from date + time strings
 function buildIsoDateTime(dateStr, timeStr, year) {
@@ -536,26 +512,7 @@ function buildIsoDateTime(dateStr, timeStr, year) {
   return d.toISOString();
 }
 
-// Build Google Calendar "create event" UI link (also opens new tab)
-function createGoogleCalendarUrl(eventDetails) {
-  const googleCalendarUrl = new URL(
-    'https://calendar.google.com/calendar/render?action=TEMPLATE'
-  );
-  const params = googleCalendarUrl.searchParams;
-  if (eventDetails.title) {
-    params.append('text', eventDetails.title);
-  }
-  if (eventDetails.dates) {
-    params.append('dates', eventDetails.dates);
-  }
-  if (eventDetails.description) {
-    params.append('details', eventDetails.description);
-  }
-  if (eventDetails.location) {
-    params.append('location', eventDetails.location);
-  }
-  return googleCalendarUrl;
-}
+// removed unused helpers for UI URL and legacy date formatting
 
 /* =========================================================
    LLM PARSING
