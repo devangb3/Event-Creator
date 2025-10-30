@@ -2,6 +2,11 @@ Gemini Event Creator - Chrome Extension
 
 A lightweight Chrome extension that allows you to select text on any webpage and quickly create Google Calendar events using intelligent text parsing.
 
+## Documentation
+
+- [Privacy Policy](https://devangb3.github.io/Event-Creator/PRIVACY)
+- [License](LICENSE)
+
 Features
 	•	Text Selection: Right-click on any selected text to create calendar events
 	•	Smart Parsing: Automatically extracts event details (date, time, location) from text
