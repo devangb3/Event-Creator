@@ -25,7 +25,11 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Create Calendar Event"
+    "default_title": "Create Calendar Event",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
 
   "background": {
@@ -43,5 +47,13 @@
 
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon64.png",
+    "128": "icons/icon128.png"
   }
+
 }
