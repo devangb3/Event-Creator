@@ -11,7 +11,7 @@ let reminderDropdownOpen = false;
 /* ------------------------------------------------------------------
    THEME
 ------------------------------------------------------------------ */
-const PRIMARY_BG   = "rgba(109,40,91,0.92)";
+const PRIMARY_BG   = "rgba(38, 0, 26, 0.75)";  
 const PRIMARY_DARK = "#4a044e";
 const CARD_SHADOW  = "0 24px 48px rgba(0,0,0,0.45)";
 const CARD_RADIUS  = "16px";
