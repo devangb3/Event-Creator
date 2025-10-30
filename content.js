@@ -7,15 +7,14 @@ let snackbarContainer = null;
 let outsideClickHandler = null;
 let colorDropdownOpen = false;
 let reminderDropdownOpen = false;
-let serviceEnabled = true; // tracks if extension is enabled
 
 /* ------------------------------------------------------------------
-   THEME
+   THEME  (popup-style)
 ------------------------------------------------------------------ */
-const PRIMARY_BG   = "rgba(38, 0, 26, 0.75)";  
+const PRIMARY_BG   = "rgba(109,40,91,0.92)";  // same as popup
 const PRIMARY_DARK = "#4a044e";
 const CARD_SHADOW  = "0 24px 48px rgba(0,0,0,0.45)";
-const CARD_RADIUS  = "16px";
+const CARD_RADIUS  = "2px";                   // KEEP: you wanted this
 const CARD_FONT =
   "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
 const CARD_MAX_WIDTH = "min(360px, 90vw)";
@@ -56,56 +55,14 @@ function log(msg, data = null) {
 }
 console.log(">>> CONTENT.JS ATTACHED <<<", window.location.href);
 
-function initServiceStatus() {
-  // Don't throw errors if background script isn't ready yet
-  // Just default to enabled and update when background responds
-  if (!chrome.runtime?.id) {
-    // Extension context is invalid
-    serviceEnabled = true;
-    return;
-  }
-
-  try {
-    chrome.runtime.sendMessage({ action: "getServiceStatus" }, (resp) => {
-      // Silently handle connection errors during initialization
-      if (chrome.runtime.lastError) {
-        // Background might not be ready yet, default to enabled
-        serviceEnabled = true;
-        return;
-      }
-      if (resp && typeof resp.enabled === 'boolean') {
-        serviceEnabled = resp.enabled;
-        log("Service status initialized", { serviceEnabled });
-      }
-    });
-  } catch (err) {
-    // Silently default to enabled if something goes wrong
-    serviceEnabled = true;
-  }
-}
-
-// Initialize service status when script loads
-// Use a small delay to give background script time to load
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initServiceStatus);
-} else {
-  // DOM already loaded, check status after a brief delay
-  setTimeout(initServiceStatus, 100);
-}
-
 /* ------------------------------------------------------------------
    SNACKBAR
-   - pending should persist
-   - success/error auto-dismiss
-   - bottom-right, no weird gap
 ------------------------------------------------------------------ */
 function updateSnackbarPosition() {
   if (!snackbarContainer) return;
 
-  // default: bottom right
   let baseBottomPx = 16;
 
-  // only push up if popup is actually visible
   if (eventCreatorContainer) {
     const style = getComputedStyle(eventCreatorContainer);
     const isVisible =
@@ -148,12 +105,6 @@ function ensureSnackbarContainer() {
   updateSnackbarPosition();
 }
 
-/**
- * showSnackbar(message, type, persist)
- * type: "info" | "success" | "error" | "pending"
- * persist: if true -> do NOT auto-dismiss, caller must remove()
- * returns the snackbar element (so caller can .remove() it)
- */
 function showSnackbar(message, type = "info", persist = false) {
   ensureSnackbarContainer();
 
@@ -221,7 +172,6 @@ function showSnackbar(message, type = "info", persist = false) {
   return snack;
 }
 
-// keyframes
 (function ensureSnackbarKeyframes() {
   if (document.getElementById("gemini-snackbar-styles")) return;
   const styleEl = document.createElement("style");
@@ -239,16 +189,7 @@ function showSnackbar(message, type = "info", persist = false) {
    RUNTIME MESSAGE HANDLER
 ------------------------------------------------------------------ */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request?.action === "serviceStatus") {
-    serviceEnabled = request.enabled === true;
-    log("Service status updated", { serviceEnabled });
-
-    if (!serviceEnabled && eventCreatorContainer) {
-      destroyPopup();
-    }
-
-    sendResponse({ success: true });
-  } else if (request?.action === "createEvent" && typeof request.text === "string") {
+  if (request?.action === "createEvent" && typeof request.text === "string") {
     showEventCreator(request.text);
     sendResponse({ success: true });
   } else if (request?.action === "getSelectedText") {
@@ -272,10 +213,6 @@ document.addEventListener("mouseup", (e) => {
   window.lastMouseY = e.clientY;
 
   if (eventCreatorContainer && eventCreatorContainer.contains(e.target)) {
-    return;
-  }
-
-  if (!serviceEnabled) {
     return;
   }
 
@@ -308,6 +245,7 @@ function getOuterWrapperStyle() {
     z-index: 999999;
   `;
 }
+
 function getCardWrapperStyle() {
   return `
     background: ${PRIMARY_BG};
@@ -315,7 +253,7 @@ function getCardWrapperStyle() {
     -webkit-backdrop-filter: blur(12px) saturate(1.2);
     border-radius: ${CARD_RADIUS};
     box-shadow: ${CARD_SHADOW};
-    padding: 16px;
+    padding: 8px;
     min-width: 0;
     width: 100%;
     max-width: 100%;
@@ -326,8 +264,23 @@ function getCardWrapperStyle() {
     font-family: ${CARD_FONT};
     border: 1px solid rgba(255,255,255,0.22);
     box-sizing: border-box;
+    border-radius: 16px;
   `;
 }
+
+/* inner card like popup sections */
+function getInnerSectionStyle() {
+  return `
+    background: rgba(0,0,0,0.15);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  `;
+}
+
 function getHeaderRowStyle() {
   return `
     display: flex;
@@ -337,6 +290,7 @@ function getHeaderRowStyle() {
     flex-wrap: nowrap;
   `;
 }
+
 function getHeaderIconBtnStyle() {
   return `
     background:none;
@@ -350,28 +304,33 @@ function getHeaderIconBtnStyle() {
     flex-shrink:0;
   `;
 }
+
+/* ✨ NEW: match glassy popup vibe */
 function getWhiteCtaButtonStyle() {
   return `
     flex: 1 1 auto;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    border: 1px solid rgba(74,4,78,0.25);
-    background: #ffffff;
-    cursor: pointer;
+    background: rgba(255,255,255,0.2); /* 👈 base is now closer to hover */
+    border: none;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     border-radius: 12px;
-    padding: 10px 12px;
+    padding: 9px 12px;
     font-size: 12px;
     line-height: 1.2;
     font-weight: 600;
-    color: ${PRIMARY_DARK};
-    box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+    color: #ffffff;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.35);
     text-align: center;
     min-width: 0;
     max-width: 100%;
+    transition: transform 0.12s ease-out, box-shadow 0.12s ease-out, background 0.12s ease-out;
   `;
 }
+
 function getInputStyle() {
   return `
     width: 100%;
@@ -416,7 +375,7 @@ function getDropdownMenuStyle() {
     background:#ffffff;
     color:#111827;
     border:1px solid #d1d5db;
-    border-radius:8px;
+    border-radius:12px;
     box-shadow:0 20px 40px rgba(0,0,0,0.4);
     padding:8px;
     display:flex;
@@ -469,12 +428,15 @@ function colorDot(hex) {
   `;
 }
 function lift(btn) {
-  btn.style.boxShadow = "0 12px 24px rgba(0,0,0,0.25)";
+  btn.style.boxShadow = "0 14px 26px rgba(0,0,0,0.32)";
   btn.style.transform = "translateY(-1px)";
+  btn.style.background = "rgba(255,255,255,0.12)"; /* 👈 slightly lighter on hover */
 }
+
 function unlift(btn) {
-  btn.style.boxShadow = "0 8px 16px rgba(0,0,0,0.15)";
+  btn.style.boxShadow = "0 10px 20px rgba(0,0,0,0.25)";
   btn.style.transform = "translateY(0)";
+  btn.style.background = "rgba(255,255,255,0.2)"; /* 👈 back to new base */
 }
 
 /* ------------------------------------------------------------------
@@ -523,41 +485,45 @@ function showEventCreator(selectedText) {
   eventCreatorContainer.style.cssText = getOuterWrapperStyle();
 
   eventCreatorContainer.innerHTML = `
-    <div class="gemini-action-card" style="${getCardWrapperStyle()}">
-      <div class="gemini-header" style="${getHeaderRowStyle()}">
-        <div style="flex:1; min-width:0;">
-          <div style="
-            font-size: 13px;
-            font-weight: 600;
-            color: #ffffff;
-            line-height:1.3;
-            letter-spacing:-0.03em;
-            word-break:break-word;
-          ">
-            Create calendar event
+    <div style="${getCardWrapperStyle()}">
+      <div style="${getInnerSectionStyle()}">
+        <div class="gemini-header" style="${getHeaderRowStyle()}">
+          <div style="flex:1; min-width:0;">
+            <div style="
+              font-size: 13px;
+              font-weight: 600;
+              color: #ffffff;
+              line-height:1.3;
+              letter-spacing:-0.03em;
+              word-break:break-word;
+            ">
+              Create calendar event
+            </div>
+            <div style="font-size:11px; color:rgba(255,255,255,0.55); margin-top:2px;">
+              Quick or full edit — like in popup
+            </div>
           </div>
+
+          <button class="gemini-close-btn" style="${getHeaderIconBtnStyle()}">
+            ✕
+          </button>
         </div>
 
-        <button class="gemini-close-btn" style="${getHeaderIconBtnStyle()}">
-          ✕
-        </button>
-      </div>
+        <div class="gemini-action-row" style="
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          width: 100%;
+          margin-top: 4px;
+        ">
+          <button class="gemini-quick-add-btn" style="${getWhiteCtaButtonStyle()}">
+            <span style="white-space:nowrap;">Quick Create</span>
+          </button>
 
-      <div class="gemini-action-row" style="
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        width: 100%;
-        padding: 0 4px;
-        margin-top: 4px;
-      ">
-        <button class="gemini-quick-add-btn" style="${getWhiteCtaButtonStyle()}">
-          <span style="white-space:nowrap; color:${PRIMARY_DARK};">Quick Create</span>
-        </button>
-
-        <button class="gemini-edit-btn" style="${getWhiteCtaButtonStyle()}">
-          <span style="white-space:nowrap; color:${PRIMARY_DARK};">Edit & Create</span>
-        </button>
+          <button class="gemini-edit-btn" style="${getWhiteCtaButtonStyle()}">
+            <span style="white-space:nowrap;">Edit & Create</span>
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -576,13 +542,11 @@ function showEventCreator(selectedText) {
   // QUICK CREATE
   quickAddBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (isCreatingEvent) return; // ✅ prevent duplicates
+    if (isCreatingEvent) return;
     isCreatingEvent = true;
 
-    // persistent grey
     const pendingSnack = showSnackbar("Creating event… please wait", "pending", true);
 
-    // remove floating buttons so user sees it worked
     destroyPopup();
 
     handleCreateEvent(selectedText, pendingSnack);
@@ -591,12 +555,11 @@ function showEventCreator(selectedText) {
   // EDIT & CREATE
   editBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    if (isCreatingEvent) return; // ✅ prevent double open
+    if (isCreatingEvent) return;
     isCreatingEvent = true;
 
     const pendingSnack = showSnackbar("Opening editor…", "pending", true);
 
-    // we want to remove the floating card
     destroyPopup();
 
     try {
@@ -698,235 +661,231 @@ function showEditableForm(selectedText, parsedEvent = null) {
   const defaultReminder = REMINDER_OPTIONS[1];
 
   eventCreatorContainer.innerHTML = `
-    <div class="event-editor-form" style="${getCardWrapperStyle()}">
+    <div style="${getCardWrapperStyle()}">
+      <div style="${getInnerSectionStyle()}">
 
-      <div class="form-header" style="
-        display:flex;
-        flex-wrap:nowrap;
-        justify-content:flex-end;
-        width:100%;
-      ">
-        <button id="closeFormBtn" style="
-          ${getHeaderIconBtnStyle()}
-          font-size:16px;
-          padding:4px 6px;
-          line-height:1;
-        ">✕</button>
-      </div>
-
-      <form id="eventForm" style="
-        display:flex;
-        flex-direction:column;
-        gap:16px;
-        width:100%;
-      ">
-
-        <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
-          <label style="${getLabelStyle()}">Event Title *</label>
-          <input
-            type="text"
-            id="eventTitle"
-            required
-            style="${getInputStyle()}"
-            placeholder="Enter event title"
-          >
-        </div>
-
-        <div class="form-row" style="
+        <div class="form-header" style="
           display:flex;
-          flex-wrap:wrap;
-          align-items:flex-start;
-          gap:12px;
-          width:100%;
-        ">
-          <div class="form-group" style="
-            flex:1 1 140px;
-            min-width:0;
-            display:flex;
-            flex-direction:column;
-          ">
-            <label style="${getLabelStyle()}">Start Time *</label>
-            <input
-              type="datetime-local"
-              id="startTime"
-              required
-              style="${getInputStyle()}"
-            >
-          </div>
-
-          <div class="form-group" style="
-            flex:1 1 140px;
-            min-width:0;
-            display:flex;
-            flex-direction:column;
-          ">
-            <label style="${getLabelStyle()}">End Time</label>
-            <input
-              type="datetime-local"
-              id="endTime"
-              style="${getInputStyle()}"
-            >
-          </div>
-        </div>
-
-        <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
-          <label style="${getLabelStyle()}">Description</label>
-          <textarea
-            id="eventDescription"
-            rows="3"
-            style="${getInputStyle()} resize: vertical;"
-            placeholder="Enter event description"
-          >${escapeHtml(selectedText)}</textarea>
-        </div>
-
-        <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
-          <label style="${getLabelStyle()}">Location</label>
-          <input
-            type="text"
-            id="eventLocation"
-            style="${getInputStyle()}"
-            placeholder="Enter event location"
-          >
-        </div>
-
-        <!-- Color + Reminder in one row -->
-        <div class="form-line-row" style="
-          display:flex;
-          flex-wrap:wrap;
-          align-items:flex-start;
-          gap:16px;
-          width:100%;
-        ">
-          <!-- COLOR -->
-          <div class="color-col" style="
-            flex:1 1 150px;
-            min-width:0;
-            display:flex;
-            flex-direction:column;
-            position:relative;
-          ">
-            <label style="${getLabelStyle()}">Color</label>
-
-            <button
-              type="button"
-              id="colorDropdownToggle"
-              style="${getSelectButtonStyle()}"
-            >
-              <span id="colorDropdownSelected" style="
-                flex:1;
-                min-width:0;
-                display:flex;
-                align-items:center;
-                gap:8px;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-                line-height:1.3;
-              ">
-                ${colorDot(defaultColor.hex)}
-                <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultColor.name}</span>
-              </span>
-              <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
-            </button>
-
-            <div
-              id="colorDropdownMenu"
-              style="${getDropdownMenuStyle()} display:none;"
-            >
-              ${colorItemsHtml}
-            </div>
-
-            <input type="hidden" id="eventColor" value="${defaultColor.value}">
-          </div>
-
-          <!-- REMINDER -->
-          <div class="reminder-col" style="
-            flex:1 1 150px;
-            min-width:0;
-            display:flex;
-            flex-direction:column;
-            position:relative;
-          ">
-            <label style="${getLabelStyle()}">Reminder</label>
-
-            <button
-              type="button"
-              id="reminderDropdownToggle"
-              style="${getSelectButtonStyle()}"
-            >
-              <span id="reminderDropdownSelected" style="
-                flex:1;
-                min-width:0;
-                display:flex;
-                align-items:center;
-                gap:8px;
-                white-space:nowrap;
-                overflow:hidden;
-                text-overflow:ellipsis;
-                line-height:1.3;
-              ">
-                <!-- ✅ no white dot -->
-                <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultReminder.label}</span>
-              </span>
-              <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
-            </button>
-
-            <div
-              id="reminderDropdownMenu"
-              style="${getDropdownMenuStyle()} display:none;"
-            >
-              ${reminderItemsHtml}
-            </div>
-
-            <input type="hidden" id="eventReminderMinutes" value="${defaultReminder.value}">
-          </div>
-        </div>
-
-        <div class="form-actions" style="
-          display:flex;
-          flex-wrap:wrap;
-          row-gap:8px;
-          column-gap:12px;
+          flex-wrap:nowrap;
           justify-content:flex-end;
           width:100%;
         ">
-          <button
-            type="button"
-            id="backBtnFooter"
-            style="
-              ${getWhiteCtaButtonStyle()}
-              flex:0 1 auto;
-              font-size:13px;
-              padding:8px 12px;
-            "
-          >
-            <span style="color:${PRIMARY_DARK};">Back</span>
-          </button>
-
-          <button
-            type="submit"
-            id="createEventBtn"
-            style="
-              ${getWhiteCtaButtonStyle()}
-              flex:0 1 auto;
-              font-size:13px;
-              padding:8px 12px;
-            "
-          >
-            <span style="color:${PRIMARY_DARK};">Create</span>
-          </button>
+          <button id="closeFormBtn" style="
+            ${getHeaderIconBtnStyle()}
+            font-size:16px;
+            padding:4px 6px;
+            line-height:1;
+          ">✕</button>
         </div>
-      </form>
+
+        <form id="eventForm" style="
+          display:flex;
+          flex-direction:column;
+          gap:16px;
+          width:100%;
+        ">
+
+          <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
+            <label style="${getLabelStyle()}">Event Title *</label>
+            <input
+              type="text"
+              id="eventTitle"
+              required
+              style="${getInputStyle()}"
+              placeholder="Enter event title"
+            >
+          </div>
+
+          <div class="form-row" style="
+            display:flex;
+            flex-wrap:wrap;
+            align-items:flex-start;
+            gap:12px;
+            width:100%;
+          ">
+            <div class="form-group" style="
+              flex:1 1 140px;
+              min-width:0;
+              display:flex;
+              flex-direction:column;
+            ">
+              <label style="${getLabelStyle()}">Start Time *</label>
+              <input
+                type="datetime-local"
+                id="startTime"
+                required
+                style="${getInputStyle()}"
+              >
+            </div>
+
+            <div class="form-group" style="
+              flex:1 1 140px;
+              min-width:0;
+              display:flex;
+              flex-direction:column;
+            ">
+              <label style="${getLabelStyle()}">End Time</label>
+              <input
+                type="datetime-local"
+                id="endTime"
+                style="${getInputStyle()}"
+              >
+            </div>
+          </div>
+
+          <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
+            <label style="${getLabelStyle()}">Description</label>
+            <textarea
+              id="eventDescription"
+              rows="3"
+              style="${getInputStyle()} resize: vertical;"
+              placeholder="Enter event description"
+            >${escapeHtml(selectedText)}</textarea>
+          </div>
+
+          <div class="form-group" style="display:flex; flex-direction:column; width:100%;">
+            <label style="${getLabelStyle()}">Location</label>
+            <input
+              type="text"
+              id="eventLocation"
+              style="${getInputStyle()}"
+              placeholder="Enter event location"
+            >
+          </div>
+
+          <div class="form-line-row" style="
+            display:flex;
+            flex-wrap:wrap;
+            align-items:flex-start;
+            gap:16px;
+            width:100%;
+          ">
+            <div class="color-col" style="
+              flex:1 1 150px;
+              min-width:0;
+              display:flex;
+              flex-direction:column;
+              position:relative;
+            ">
+              <label style="${getLabelStyle()}">Color</label>
+
+              <button
+                type="button"
+                id="colorDropdownToggle"
+                style="${getSelectButtonStyle()}"
+              >
+                <span id="colorDropdownSelected" style="
+                  flex:1;
+                  min-width:0;
+                  display:flex;
+                  align-items:center;
+                  gap:8px;
+                  white-space:nowrap;
+                  overflow:hidden;
+                  text-overflow:ellipsis;
+                  line-height:1.3;
+                ">
+                  ${colorDot(defaultColor.hex)}
+                  <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultColor.name}</span>
+                </span>
+                <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
+              </button>
+
+              <div
+                id="colorDropdownMenu"
+                style="${getDropdownMenuStyle()} display:none;"
+              >
+                ${colorItemsHtml}
+              </div>
+
+              <input type="hidden" id="eventColor" value="${defaultColor.value}">
+            </div>
+
+            <div class="reminder-col" style="
+              flex:1 1 150px;
+              min-width:0;
+              display:flex;
+              flex-direction:column;
+              position:relative;
+            ">
+              <label style="${getLabelStyle()}">Reminder</label>
+
+              <button
+                type="button"
+                id="reminderDropdownToggle"
+                style="${getSelectButtonStyle()}"
+              >
+                <span id="reminderDropdownSelected" style="
+                  flex:1;
+                  min-width:0;
+                  display:flex;
+                  align-items:center;
+                  gap:8px;
+                  white-space:nowrap;
+                  overflow:hidden;
+                  text-overflow:ellipsis;
+                  line-height:1.3;
+                ">
+                  <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultReminder.label}</span>
+                </span>
+                <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
+              </button>
+
+              <div
+                id="reminderDropdownMenu"
+                style="${getDropdownMenuStyle()} display:none;"
+              >
+                ${reminderItemsHtml}
+              </div>
+
+              <input type="hidden" id="eventReminderMinutes" value="${defaultReminder.value}">
+            </div>
+          </div>
+
+          <div class="form-actions" style="
+            display:flex;
+            flex-wrap:wrap;
+            row-gap:8px;
+            column-gap:12px;
+            justify-content:flex-end;
+            width:100%;
+          ">
+            <button
+              type="button"
+              id="backBtnFooter"
+              style="
+                ${getWhiteCtaButtonStyle()}
+                flex:0 1 auto;
+                font-size:13px;
+                padding:8px 12px;
+              "
+            >
+              <span>Back</span>
+            </button>
+
+            <button
+              type="submit"
+              id="createEventBtn"
+              style="
+                ${getWhiteCtaButtonStyle()}
+                flex:0 1 auto;
+                font-size:13px;
+                padding:8px 12px;
+              "
+            >
+              <span>Create</span>
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   `;
 
   document.body.appendChild(eventCreatorContainer);
 
-  // wire dropdowns
   setupColorDropdown();
   setupReminderDropdown();
 
-  // ====== PREFILL ======
   const titleEl = document.getElementById("eventTitle");
   const startEl = document.getElementById("startTime");
   const endEl   = document.getElementById("endTime");
@@ -981,12 +940,10 @@ function showEditableForm(selectedText, parsedEvent = null) {
         (r) => Number(r.value) === Number(parsedEvent.reminder_minutes)
       );
       if (found && selectedSpan) {
-        // ✅ text only
         selectedSpan.innerHTML = `<span style="font-size:14px; color:#111827; line-height:1.3;">${found.label}</span>`;
       }
     }
   } else {
-    // fallback: tomorrow 9–10
     const now = new Date();
     const defaultStart = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     defaultStart.setHours(9, 0, 0, 0);
@@ -997,7 +954,6 @@ function showEditableForm(selectedText, parsedEvent = null) {
     endEl.value    = defaultEnd.toISOString().slice(0, 16);
   }
 
-  // form actions
   const closeBtn      = document.getElementById("closeFormBtn");
   const backBtnFooter = document.getElementById("backBtnFooter");
   const form          = document.getElementById("eventForm");
@@ -1112,7 +1068,6 @@ function setupReminderDropdown() {
       const label = item.getAttribute("data-reminder-label");
 
       hiddenInput.value = val;
-      // ✅ text only
       selectedEl.innerHTML = `<span style="font-size:14px; color:#111827; line-height:1.3;">${label}</span>`;
 
       menuEl.style.display = "none";
@@ -1132,7 +1087,7 @@ function closeReminderDropdown() {
    FORM SUBMIT (EDIT FLOW)
 ------------------------------------------------------------------ */
 async function handleFormSubmission() {
-  if (isCreatingEvent) return; // prevent double-submit
+  if (isCreatingEvent) return;
   isCreatingEvent = true;
 
   const titleEl         = document.getElementById("eventTitle");
@@ -1163,17 +1118,14 @@ async function handleFormSubmission() {
     return;
   }
 
-  // disable button just in case user still sees form for a ms
   if (submitBtn) {
     submitBtn.disabled = true;
     submitBtn.style.opacity = "0.6";
     submitBtn.style.cursor = "not-allowed";
   }
 
-  // ✅ FIRST: close the editor so snackbar is not on top of it
   destroyPopup();
 
-  // ✅ THEN: show persistent grey snackbar
   const pendingSnack = showSnackbar("Saving event…", "pending", true);
 
   try {
@@ -1192,7 +1144,6 @@ async function handleFormSubmission() {
       eventData: eventData
     });
 
-    // remove grey
     if (pendingSnack && pendingSnack.parentNode) {
       pendingSnack.parentNode.removeChild(pendingSnack);
     }
@@ -1204,7 +1155,6 @@ async function handleFormSubmission() {
     }
   } catch (error) {
     console.log("Error creating event from form:", error);
-    // make sure editor is gone already; just swap snackbar
     if (pendingSnack && pendingSnack.parentNode) {
       pendingSnack.parentNode.removeChild(pendingSnack);
     }
@@ -1213,6 +1163,7 @@ async function handleFormSubmission() {
     isCreatingEvent = false;
   }
 }
+
 /* ------------------------------------------------------------------
    QUICK ADD FLOW
 ------------------------------------------------------------------ */
@@ -1220,8 +1171,6 @@ async function handleCreateEvent(text, pendingSnackEl) {
   try {
     const resp = await sendAnalyzeText(text);
 
-    // remove popup already done by caller
-    // remove pending snackbar
     if (pendingSnackEl && pendingSnackEl.parentNode) {
       pendingSnackEl.parentNode.removeChild(pendingSnackEl);
     }
