@@ -579,6 +579,7 @@ async function parseEventDetails(text) {
     - start_time (24-hour format, e.g. "18:00")
     - end_time (24-hour format, e.g. "19:00")
     - year (use current year if not given)
+    -location
     Output a valid JSON object. 
 
     * If no year is provided, use the current year ${new Date().getFullYear()}.
