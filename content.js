@@ -1,29 +1,27 @@
 // content.js
 
 let eventCreatorContainer = null;
-let isCreatingEvent = false; // block cleanup while creating
-let isEditingOpen = false;   // block cleanup while edit form is open
+let isCreatingEvent = false; // hard guard against duplicates
+let isEditingOpen = false;
 let snackbarContainer = null;
-let outsideClickHandler = null; // to close on outside click
+let outsideClickHandler = null;
 let colorDropdownOpen = false;
 let reminderDropdownOpen = false;
 
 /* ------------------------------------------------------------------
-   THEME TOKENS
-   Deep magenta / plum (toward red) as main accent.
+   THEME
 ------------------------------------------------------------------ */
-const PRIMARY_BG   = "rgba(109,40,91,0.92)"; // deep magenta/violet w/alpha
-const PRIMARY_DARK = "#4a044e";              // deeper plum for icons/text on white
+const PRIMARY_BG   = "rgba(109,40,91,0.92)";
+const PRIMARY_DARK = "#4a044e";
 const CARD_SHADOW  = "0 24px 48px rgba(0,0,0,0.45)";
 const CARD_RADIUS  = "16px";
 const CARD_FONT =
   "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-
-const CARD_MAX_WIDTH = "min(360px, 90vw)"; // shared width target for popup & snackbar
+const CARD_MAX_WIDTH = "min(360px, 90vw)";
 
 /* Calendar-like colors */
 const COLOR_OPTIONS = [
-  { value: "default",   name: "Default",   hex: "#4285f4" }, // Google-y blue
+  { value: "default",   name: "Default",   hex: "#4285f4" },
   { value: "lavender",  name: "Lavender",  hex: "#a79bff" },
   { value: "sage",      name: "Sage",      hex: "#7cb342" },
   { value: "grape",     name: "Grape",     hex: "#b36ae2" },
@@ -36,7 +34,7 @@ const COLOR_OPTIONS = [
   { value: "tomato",    name: "Tomato",    hex: "#d50000" }
 ];
 
-/* Reminder options in minutes before event */
+/* Reminder options */
 const REMINDER_OPTIONS = [
   { value: "2880", label: "2 days before" },
   { value: "1440", label: "1 day before" },
@@ -46,7 +44,7 @@ const REMINDER_OPTIONS = [
   { value: "10",   label: "10 minutes before" }
 ];
 
-// --- util logging
+// log
 function log(msg, data = null) {
   const ts = new Date().toISOString();
   if (data !== null) {
@@ -58,24 +56,29 @@ function log(msg, data = null) {
 console.log(">>> CONTENT.JS ATTACHED <<<", window.location.href);
 
 /* ------------------------------------------------------------------
-   SNACKBAR + POSITIONING
-   RULES:
-   - If popup/form is CLOSED -> snackbar sits in the bottom-right corner (16px).
-   - If popup/form is OPEN   -> snackbar moves UP above popup.
-   - Snackbar width matches popup width (up to 360px, responsive).
-   - Snackbar lines up with same right/bottom margin.
+   SNACKBAR
+   - pending should persist
+   - success/error auto-dismiss
+   - bottom-right, no weird gap
 ------------------------------------------------------------------ */
-
-// Call this anytime popup open/close changes or when a snackbar is shown
 function updateSnackbarPosition() {
   if (!snackbarContainer) return;
 
+  // default: bottom right
   let baseBottomPx = 16;
 
+  // only push up if popup is actually visible
   if (eventCreatorContainer) {
-    const rect = eventCreatorContainer.getBoundingClientRect();
-    const popupHeight = rect.height || 0;
-    baseBottomPx = 16 + popupHeight + 8;
+    const style = getComputedStyle(eventCreatorContainer);
+    const isVisible =
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0";
+    if (isVisible) {
+      const rect = eventCreatorContainer.getBoundingClientRect();
+      const popupHeight = rect.height || 0;
+      baseBottomPx = 16 + popupHeight + 8;
+    }
   }
 
   snackbarContainer.style.bottom = baseBottomPx + "px";
@@ -94,7 +97,7 @@ function ensureSnackbarContainer() {
     position: fixed;
     z-index: 1000000;
     display: flex;
-    flex-direction: column-reverse; /* newest toast bottom */
+    flex-direction: column-reverse;
     align-items: flex-end;
     gap: 8px;
     pointer-events: none;
@@ -107,12 +110,19 @@ function ensureSnackbarContainer() {
   updateSnackbarPosition();
 }
 
-function showSnackbar(message, type = "info") {
+/**
+ * showSnackbar(message, type, persist)
+ * type: "info" | "success" | "error" | "pending"
+ * persist: if true -> do NOT auto-dismiss, caller must remove()
+ * returns the snackbar element (so caller can .remove() it)
+ */
+function showSnackbar(message, type = "info", persist = false) {
   ensureSnackbarContainer();
 
   const bg =
     type === "error"   ? "#b91c1c" :
     type === "success" ? "#065f46" :
+    type === "pending" ? "#9ca3af" :
                           "#1f2937";
 
   const snack = document.createElement("div");
@@ -159,18 +169,21 @@ function showSnackbar(message, type = "info") {
   });
 
   snackbarContainer.appendChild(snack);
-
-  setTimeout(() => {
-    if (snack && snack.parentNode) {
-      snack.parentNode.removeChild(snack);
-    }
-    updateSnackbarPosition();
-  }, 3000);
-
   updateSnackbarPosition();
+
+  if (!persist) {
+    setTimeout(() => {
+      if (snack && snack.parentNode) {
+        snack.parentNode.removeChild(snack);
+      }
+      updateSnackbarPosition();
+    }, 3000);
+  }
+
+  return snack;
 }
 
-// Inject snackbar keyframes once
+// keyframes
 (function ensureSnackbarKeyframes() {
   if (document.getElementById("gemini-snackbar-styles")) return;
   const styleEl = document.createElement("style");
@@ -231,8 +244,6 @@ document.addEventListener("selectionchange", () => {
 /* ------------------------------------------------------------------
    STYLE HELPERS
 ------------------------------------------------------------------ */
-
-// Bottom-right wrapper for popup/form
 function getOuterWrapperStyle() {
   return `
     position: fixed;
@@ -246,8 +257,6 @@ function getOuterWrapperStyle() {
     z-index: 999999;
   `;
 }
-
-// shared card style
 function getCardWrapperStyle() {
   return `
     background: ${PRIMARY_BG};
@@ -268,8 +277,6 @@ function getCardWrapperStyle() {
     box-sizing: border-box;
   `;
 }
-
-// header row (for floating bubble)
 function getHeaderRowStyle() {
   return `
     display: flex;
@@ -279,8 +286,6 @@ function getHeaderRowStyle() {
     flex-wrap: nowrap;
   `;
 }
-
-// generic "X" button
 function getHeaderIconBtnStyle() {
   return `
     background:none;
@@ -294,8 +299,6 @@ function getHeaderIconBtnStyle() {
     flex-shrink:0;
   `;
 }
-
-// pill CTA buttons
 function getWhiteCtaButtonStyle() {
   return `
     flex: 1 1 auto;
@@ -318,8 +321,6 @@ function getWhiteCtaButtonStyle() {
     max-width: 100%;
   `;
 }
-
-// text/inputs
 function getInputStyle() {
   return `
     width: 100%;
@@ -335,8 +336,6 @@ function getInputStyle() {
     font-family: ${CARD_FONT};
   `;
 }
-
-// dropdown trigger button (color + reminder)
 function getSelectButtonStyle() {
   return `
     width: 100%;
@@ -357,8 +356,6 @@ function getSelectButtonStyle() {
     box-sizing:border-box;
   `;
 }
-
-// dropdown menu popover
 function getDropdownMenuStyle() {
   return `
     position:absolute;
@@ -380,8 +377,6 @@ function getDropdownMenuStyle() {
     box-sizing:border-box;
   `;
 }
-
-// dropdown item
 function getDropdownItemStyle() {
   return `
     display:flex;
@@ -399,8 +394,6 @@ function getDropdownItemStyle() {
 function getDropdownItemHoverStyle() {
   return "background:#f3f4f6;";
 }
-
-// labels
 function getLabelStyle() {
   return `
     display: block;
@@ -411,8 +404,6 @@ function getLabelStyle() {
     line-height:1.3;
   `;
 }
-
-// tiny colored circle
 function colorDot(hex) {
   return `
     <span style="
@@ -426,8 +417,6 @@ function colorDot(hex) {
     "></span>
   `;
 }
-
-// hover lift on pill CTAs
 function lift(btn) {
   btn.style.boxShadow = "0 12px 24px rgba(0,0,0,0.25)";
   btn.style.transform = "translateY(-1px)";
@@ -438,7 +427,7 @@ function unlift(btn) {
 }
 
 /* ------------------------------------------------------------------
-   CLICK OUTSIDE HANDLER (closes popup/form)
+   CLICK OUTSIDE
 ------------------------------------------------------------------ */
 function attachOutsideClickToClose() {
   detachOutsideClickToClose();
@@ -450,10 +439,8 @@ function attachOutsideClickToClose() {
     const colorMenu = eventCreatorContainer.querySelector("#colorDropdownMenu");
     const reminderMenu = eventCreatorContainer.querySelector("#reminderDropdownMenu");
 
-    const clickedInColorMenu =
-      colorMenu && colorMenu.contains(evt.target);
-    const clickedInReminderMenu =
-      reminderMenu && reminderMenu.contains(evt.target);
+    const clickedInColorMenu = colorMenu && colorMenu.contains(evt.target);
+    const clickedInReminderMenu = reminderMenu && reminderMenu.contains(evt.target);
 
     if (clickedInColorMenu || clickedInReminderMenu) return;
 
@@ -535,14 +522,64 @@ function showEventCreator(selectedText) {
   editBtn.addEventListener("mouseenter", () => lift(editBtn));
   editBtn.addEventListener("mouseleave", () => unlift(editBtn));
 
+  // QUICK CREATE
   quickAddBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    handleCreateEvent(selectedText);
+    if (isCreatingEvent) return; // ✅ prevent duplicates
+    isCreatingEvent = true;
+
+    // persistent grey
+    const pendingSnack = showSnackbar("Creating event… please wait", "pending", true);
+
+    // remove floating buttons so user sees it worked
+    destroyPopup();
+
+    handleCreateEvent(selectedText, pendingSnack);
   });
 
-  editBtn.addEventListener("click", (e) => {
+  // EDIT & CREATE
+  editBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
-    showEditableForm(selectedText);
+    if (isCreatingEvent) return; // ✅ prevent double open
+    isCreatingEvent = true;
+
+    const pendingSnack = showSnackbar("Opening editor…", "pending", true);
+
+    // we want to remove the floating card
+    destroyPopup();
+
+    try {
+      const resp = await new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { action: "parseTextToEvent", text: selectedText },
+          (ans) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(ans);
+          }
+        );
+      });
+
+      if (pendingSnack && pendingSnack.parentNode) {
+        pendingSnack.parentNode.removeChild(pendingSnack);
+      }
+
+      if (resp && resp.success && resp.event) {
+        showEditableForm(selectedText, resp.event);
+      } else {
+        showEditableForm(selectedText);
+      }
+    } catch (err) {
+      log("parseTextToEvent failed, fallback to plain form:", err);
+      if (pendingSnack && pendingSnack.parentNode) {
+        pendingSnack.parentNode.removeChild(pendingSnack);
+      }
+      showEditableForm(selectedText);
+    } finally {
+      isCreatingEvent = false;
+    }
   });
 
   closeBtn.addEventListener("click", (e) => {
@@ -564,17 +601,13 @@ function destroyPopup() {
   }
   isEditingOpen = false;
   detachOutsideClickToClose();
-
   updateSnackbarPosition();
 }
 
 /* ------------------------------------------------------------------
    EDIT FORM CARD
-   - Only X in header.
-   - Color + Reminder on ONE LINE, no helper text under them.
-   - Footer Back + Save.
 ------------------------------------------------------------------ */
-function showEditableForm(selectedText) {
+function showEditableForm(selectedText, parsedEvent = null) {
   isEditingOpen = true;
 
   if (eventCreatorContainer) {
@@ -705,7 +738,7 @@ function showEditableForm(selectedText) {
           >
         </div>
 
-        <!-- Color + Reminder: same single row, no helper/hint lines -->
+        <!-- Color + Reminder in one row -->
         <div class="form-line-row" style="
           display:flex;
           flex-wrap:wrap;
@@ -713,7 +746,7 @@ function showEditableForm(selectedText) {
           gap:16px;
           width:100%;
         ">
-          <!-- COLOR DROPDOWN -->
+          <!-- COLOR -->
           <div class="color-col" style="
             flex:1 1 150px;
             min-width:0;
@@ -755,7 +788,7 @@ function showEditableForm(selectedText) {
             <input type="hidden" id="eventColor" value="${defaultColor.value}">
           </div>
 
-          <!-- REMINDER DROPDOWN -->
+          <!-- REMINDER -->
           <div class="reminder-col" style="
             flex:1 1 150px;
             min-width:0;
@@ -781,6 +814,7 @@ function showEditableForm(selectedText) {
                 text-overflow:ellipsis;
                 line-height:1.3;
               ">
+                <!-- ✅ no white dot -->
                 <span style="font-size:14px; color:#111827; line-height:1.3;">${defaultReminder.label}</span>
               </span>
               <span style="flex-shrink:0; color:#6b7280; font-size:12px; line-height:1;">▼</span>
@@ -837,19 +871,80 @@ function showEditableForm(selectedText) {
 
   document.body.appendChild(eventCreatorContainer);
 
-  // Default times (tomorrow 9–10)
-  const now = new Date();
-  const defaultStart = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  defaultStart.setHours(9, 0, 0, 0);
-  const defaultEnd = new Date(defaultStart.getTime() + 60 * 60 * 1000);
-
-  document.getElementById("eventTitle").value = selectedText.slice(0, 50);
-  document.getElementById("startTime").value  = defaultStart.toISOString().slice(0, 16);
-  document.getElementById("endTime").value    = defaultEnd.toISOString().slice(0, 16);
-
   // wire dropdowns
   setupColorDropdown();
   setupReminderDropdown();
+
+  // ====== PREFILL ======
+  const titleEl = document.getElementById("eventTitle");
+  const startEl = document.getElementById("startTime");
+  const endEl   = document.getElementById("endTime");
+  const descEl  = document.getElementById("eventDescription");
+  const locEl   = document.getElementById("eventLocation");
+  const colorHiddenEl = document.getElementById("eventColor");
+  const reminderHiddenEl = document.getElementById("eventReminderMinutes");
+
+  function isoToDatetimeLocal(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, "0");
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const hour = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    return `${year}-${month}-${day}T${hour}:${min}`;
+  }
+
+  if (parsedEvent) {
+    titleEl.value = parsedEvent.title || selectedText.slice(0, 50);
+    if (parsedEvent.start_time) {
+      startEl.value = isoToDatetimeLocal(parsedEvent.start_time);
+    }
+    if (parsedEvent.end_time) {
+      endEl.value = isoToDatetimeLocal(parsedEvent.end_time);
+    }
+    if (parsedEvent.description) {
+      descEl.value = parsedEvent.description;
+    }
+    if (parsedEvent.location) {
+      locEl.value = parsedEvent.location;
+    }
+
+    if (parsedEvent.color) {
+      colorHiddenEl.value = parsedEvent.color;
+      const selectedSpan = eventCreatorContainer.querySelector("#colorDropdownSelected");
+      const found = COLOR_OPTIONS.find((c) => c.value === parsedEvent.color);
+      if (found && selectedSpan) {
+        selectedSpan.innerHTML = `
+          ${colorDot(found.hex)}
+          <span style="font-size:14px; color:#111827; line-height:1.3;">${found.name}</span>
+        `;
+      }
+    }
+
+    if (typeof parsedEvent.reminder_minutes === "number") {
+      reminderHiddenEl.value = String(parsedEvent.reminder_minutes);
+      const selectedSpan = eventCreatorContainer.querySelector("#reminderDropdownSelected");
+      const found = REMINDER_OPTIONS.find(
+        (r) => Number(r.value) === Number(parsedEvent.reminder_minutes)
+      );
+      if (found && selectedSpan) {
+        // ✅ text only
+        selectedSpan.innerHTML = `<span style="font-size:14px; color:#111827; line-height:1.3;">${found.label}</span>`;
+      }
+    }
+  } else {
+    // fallback: tomorrow 9–10
+    const now = new Date();
+    const defaultStart = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    defaultStart.setHours(9, 0, 0, 0);
+    const defaultEnd = new Date(defaultStart.getTime() + 60 * 60 * 1000);
+
+    titleEl.value = selectedText.slice(0, 50);
+    startEl.value  = defaultStart.toISOString().slice(0, 16);
+    endEl.value    = defaultEnd.toISOString().slice(0, 16);
+  }
 
   // form actions
   const closeBtn      = document.getElementById("closeFormBtn");
@@ -870,7 +965,7 @@ function showEditableForm(selectedText) {
     handleFormSubmission();
   });
 
-  document.getElementById("eventTitle").focus();
+  titleEl.focus();
 
   attachOutsideClickToClose();
   updateSnackbarPosition();
@@ -966,17 +1061,8 @@ function setupReminderDropdown() {
       const label = item.getAttribute("data-reminder-label");
 
       hiddenInput.value = val;
-      selectedEl.innerHTML = `
-        <span style="
-          width:12px;
-          height:12px;
-          border-radius:9999px;
-          background:#ffffff;
-          border:1px solid #9ca3af;
-          flex-shrink:0;
-        "></span>
-        <span style="font-size:14px; color:#111827; line-height:1.3;">${label}</span>
-      `;
+      // ✅ text only
+      selectedEl.innerHTML = `<span style="font-size:14px; color:#111827; line-height:1.3;">${label}</span>`;
 
       menuEl.style.display = "none";
       reminderDropdownOpen = false;
@@ -995,6 +1081,9 @@ function closeReminderDropdown() {
    FORM SUBMIT (EDIT FLOW)
 ------------------------------------------------------------------ */
 async function handleFormSubmission() {
+  if (isCreatingEvent) return; // prevent double-submit
+  isCreatingEvent = true;
+
   const titleEl         = document.getElementById("eventTitle");
   const startTimeEl     = document.getElementById("startTime");
   const endTimeEl       = document.getElementById("endTime");
@@ -1014,20 +1103,29 @@ async function handleFormSubmission() {
 
   if (!title) {
     showSnackbar("Add a title", "error");
+    isCreatingEvent = false;
     return;
   }
   if (!startTime) {
     showSnackbar("Add a start time", "error");
+    isCreatingEvent = false;
     return;
   }
 
-  submitBtn.disabled = true;
-  submitBtn.style.opacity = "0.6";
-  submitBtn.style.cursor = "not-allowed";
+  // disable button just in case user still sees form for a ms
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.style.opacity = "0.6";
+    submitBtn.style.cursor = "not-allowed";
+  }
+
+  // ✅ FIRST: close the editor so snackbar is not on top of it
+  destroyPopup();
+
+  // ✅ THEN: show persistent grey snackbar
+  const pendingSnack = showSnackbar("Saving event…", "pending", true);
 
   try {
-    isCreatingEvent = true;
-
     const eventData = {
       title: title,
       start_time: new Date(startTime).toISOString(),
@@ -1043,7 +1141,10 @@ async function handleFormSubmission() {
       eventData: eventData
     });
 
-    destroyPopup(); // popup gone before snackbar
+    // remove grey
+    if (pendingSnack && pendingSnack.parentNode) {
+      pendingSnack.parentNode.removeChild(pendingSnack);
+    }
 
     if (response && response.success) {
       showSnackbar("Event saved", "success");
@@ -1051,51 +1152,38 @@ async function handleFormSubmission() {
       throw new Error(response?.error || "Failed to create event");
     }
   } catch (error) {
-    log("Error creating event from form:", error);
-    destroyPopup();
+    console.log("Error creating event from form:", error);
+    // make sure editor is gone already; just swap snackbar
+    if (pendingSnack && pendingSnack.parentNode) {
+      pendingSnack.parentNode.removeChild(pendingSnack);
+    }
     showSnackbar("Couldn't save event", "error");
   } finally {
     isCreatingEvent = false;
-    isEditingOpen = false;
   }
 }
-
 /* ------------------------------------------------------------------
    QUICK ADD FLOW
 ------------------------------------------------------------------ */
-async function handleCreateEvent(text) {
-  if (!eventCreatorContainer) {
-    return;
-  }
-
-  const quickAddBtn = eventCreatorContainer.querySelector(".gemini-quick-add-btn");
-  const editBtn     = eventCreatorContainer.querySelector(".gemini-edit-btn");
-
-  if (quickAddBtn) {
-    quickAddBtn.style.opacity = "0.6";
-    quickAddBtn.style.cursor = "not-allowed";
-    quickAddBtn.disabled = true;
-  }
-  if (editBtn) {
-    editBtn.style.opacity = "0.6";
-    editBtn.style.cursor = "not-allowed";
-    editBtn.disabled = true;
-  }
-
+async function handleCreateEvent(text, pendingSnackEl) {
   try {
-    isCreatingEvent = true;
-
     const resp = await sendAnalyzeText(text);
 
-    destroyPopup();
+    // remove popup already done by caller
+    // remove pending snackbar
+    if (pendingSnackEl && pendingSnackEl.parentNode) {
+      pendingSnackEl.parentNode.removeChild(pendingSnackEl);
+    }
 
     if (resp?.success) {
       showSnackbar("Event created", "success");
     } else {
-      throw new Error(resp?.error || "Failed to create event");
+      showSnackbar("Couldn't create", "error");
     }
   } catch (err) {
-    destroyPopup();
+    if (pendingSnackEl && pendingSnackEl.parentNode) {
+      pendingSnackEl.parentNode.removeChild(pendingSnackEl);
+    }
     showSnackbar("Couldn't create", "error");
   } finally {
     isCreatingEvent = false;
@@ -1108,32 +1196,13 @@ async function handleCreateEvent(text) {
 ------------------------------------------------------------------ */
 function sendAnalyzeText(text) {
   return new Promise((resolve, reject) => {
-    const ts = new Date().toISOString();
-    console.log(`[${ts}] CONTENT DEBUG: sendAnalyzeText called with text:`, text?.slice(0, 80));
-
-    let timeoutFired = false;
-
     const timeout = setTimeout(() => {
-      timeoutFired = true;
-      const ts2 = new Date().toISOString();
-      console.log(`[${ts2}] CONTENT DEBUG: sendAnalyzeText TIMEOUT after 10s (background maybe dead)`);
       reject(new Error("Request timeout (background did not respond)"));
     }, 50000);
 
     try {
       chrome.runtime.sendMessage({ action: "analyzeText", text }, (resp) => {
         clearTimeout(timeout);
-
-        const ts3 = new Date().toISOString();
-        console.log(`[${ts3}] CONTENT DEBUG: sendAnalyzeText callback fired`, {
-          resp,
-          lastError: chrome.runtime.lastError
-            ? chrome.runtime.lastError.message
-            : null,
-          timeoutFired,
-        });
-
-        if (timeoutFired) return;
 
         if (chrome.runtime.lastError) {
           reject(new Error("chrome.runtime.lastError: " + chrome.runtime.lastError.message));
@@ -1144,8 +1213,6 @@ function sendAnalyzeText(text) {
       });
     } catch (err) {
       clearTimeout(timeout);
-      const ts4 = new Date().toISOString();
-      console.log(`[${ts4}] CONTENT DEBUG: sendAnalyzeText threw synchronously`, err);
       reject(err);
     }
   });

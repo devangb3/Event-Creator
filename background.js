@@ -1,10 +1,14 @@
 // background.js
 // Bring in auth logic (makes self.Auth available)
 importScripts('auth.js');
-import anyDateParser from './node_modules/any-date-parser/dist/index.mjs';
 // Bring in Gemini / parsing helpers (must define analyzeTextWithPromptAPI,
 // fallbackParseEventFromText, LanguageModel, etc.)
 importScripts('services/promptAPIService.js');
+
+// NOTE: you're mixing ESM + importScripts above.
+// If your build step inlines any-date-parser, keep this import.
+// If not, you can swap this to a bundled version.
+import anyDateParser from './node_modules/any-date-parser/dist/index.mjs';
 
 function log(message, data = null) {
   const timestamp = new Date().toISOString();
@@ -34,11 +38,6 @@ chrome.runtime.onStartup?.addListener(() => {
 
 /* =========================================================
    SERVICE TOGGLE (GLOBAL ON/OFF)
-   ---------------------------------------------------------
-   - popup asks getServiceStatus / enableService / disableService
-   - background stores and enforces it
-   - content.js relies on actions analyzeText / createEventFromData
-     being blocked if disabled
 ========================================================= */
 
 const SERVICE_KEY = 'serviceEnabled';
@@ -133,7 +132,52 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-    // ========== AUTH + ANALYZE + DIRECT CREATE (QUICK CREATE) ==========
+  /* =========================================================
+     NEW: parseTextToEvent
+     - used by content.js "Edit & Create"
+     - DOES NOT create calendar event
+     - just returns normalized fields so form can prefill
+  ========================================================== */
+  if (request.action === 'parseTextToEvent') {
+    if (!serviceEnabled) {
+      log('Blocked parseTextToEvent: service disabled');
+      sendResponse({ success: false, error: 'SERVICE_DISABLED' });
+      return true;
+    }
+
+    (async () => {
+      try {
+        const rawEvent = await parseEventDetails(request.text || '');
+        log('parseTextToEvent rawEvent:', rawEvent);
+
+        // normalize → ISO etc.
+        const normalized = normalizeParsedEvent(rawEvent);
+        log('parseTextToEvent normalized:', normalized);
+
+        sendResponse({ success: true, event: normalized });
+      } catch (err) {
+        log('parseTextToEvent error:', { message: err.message, stack: err.stack });
+        // Fallback: at least return title so UI can show something
+        sendResponse({
+          success: true,
+          event: {
+            title: (request.text || '').slice(0, 50),
+            start_time: null,
+            end_time: null,
+            description: request.text || '',
+            location: null,
+            color: 'default',
+            reminder_minutes: 1440
+          },
+          warning: err.message
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  // ========== AUTH + ANALYZE + DIRECT CREATE (QUICK CREATE) ==========
   if (request.action === 'analyzeText') {
     // block if off
     if (!serviceEnabled) {
@@ -163,26 +207,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const rawEvent = await parseEventDetails(request.text);
         log('Parsed rawEvent from model:', rawEvent);
 
-        // STEP 2.1: normalize into real ISO timestamps for Calendar API
-        // buildIsoDateTime("10/30/2025", "5 PM") -> "2025-10-30T23:00:00.000Z"
-        const startIso = buildIsoDateTime(
-          rawEvent.start_date,
-          rawEvent.start_time
-        );
-        console.log("startISo",startIso)
-
-
-        const endIsoCandidate = buildIsoDateTime(
-          rawEvent.end_date || rawEvent.start_date,
-          rawEvent.end_time
-        );
-        console.log("endIsoCandidate",endIsoCandidate)
-        const endIso =
-          endIsoCandidate ||
-          (startIso ? addOneHourIso(startIso) : null);
+        // STEP 2.1: normalize (same logic as parseTextToEvent)
+        const calendarReadyEvent = normalizeParsedEvent(rawEvent);
 
         // If we still don't have a valid start, bail gracefully
-        if (!startIso) {
+        if (!calendarReadyEvent.start_time) {
           log('No valid start_time after normalization');
           sendResponse({
             success: false,
@@ -190,22 +219,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           });
           return;
         }
-
-        // STEP 2.2: build object we actually send to Calendar API
-        // This mirrors the shape content.js sends in handleFormSubmission()
-        // so createCalendarEvent() can understand it.
-        const calendarReadyEvent = {
-          title: rawEvent.title || 'Untitled event',
-          start_time: startIso,
-          end_time: endIso,
-          description: (rawEvent.description || rawEvent.title || '').trim(),
-          location: rawEvent.location || null,
-          attendees: rawEvent.attendees || [],
-          // Quick Create doesn't ask the user for color/reminder,
-          // so give sane defaults that match Edit & Create assumptions:
-          color: "default",
-          reminder_minutes: null
-        };
 
         log('QuickCreate calendarReadyEvent:', calendarReadyEvent);
 
@@ -215,10 +228,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           calendarReadyEvent
         );
         log('Event created successfully (quick create):', createdEvent);
-
-        // IMPORTANT:
-        // We DO NOT open a new tab anymore.
-        // chrome.tabs.create({ url: ... }) is intentionally removed.
 
         // STEP 4: reply back to content.js so it can show snackbar
         sendResponse({
@@ -353,32 +362,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 ========================================================= */
 
 function mapUiColorToGoogleColorId(uiColor) {
-  // Maps UI color values to Google Calendar event colorId strings.
-  // If we return undefined, we just don't set colorId at all,
-  // which means "use the calendar's default color".
   switch (uiColor) {
-    case "lavender":
-      return "1";
-    case "sage":
-      return "2";
-    case "grape":
-      return "3";
-    case "flamingo":
-      return "4";
-    case "banana":
-      return "5";
-    case "tangerine":
-      return "6";
-    case "peacock":
-      return "7";
-    case "graphite":
-      return "8";
-    // 9 is often "blueberry"/indigo; we're not exposing it in UI.
-    case "basil":
-      return "10";
-    case "tomato":
-      return "11";
-    case "default":
+    case 'lavender':
+      return '1';
+    case 'sage':
+      return '2';
+    case 'grape':
+      return '3';
+    case 'flamingo':
+      return '4';
+    case 'banana':
+      return '5';
+    case 'tangerine':
+      return '6';
+    case 'peacock':
+      return '7';
+    case 'graphite':
+      return '8';
+    case 'basil':
+      return '10';
+    case 'tomato':
+      return '11';
+    case 'default':
     default:
       return undefined;
   }
@@ -389,12 +394,10 @@ async function createCalendarEvent(accessToken, eventData) {
   log('Creating calendar event via API:', eventData);
 
   try {
-    // normalize times coming from either quick create or edit form
     const startDateTime = eventData.start_time;
     const endDateTime =
       eventData.end_time || addOneHourIso(eventData.start_time);
 
-    // build base event body
     const calendarEvent = {
       summary: eventData.title,
       description: eventData.description || eventData.title,
@@ -406,36 +409,28 @@ async function createCalendarEvent(accessToken, eventData) {
       }
     };
 
-    // location if any
     if (eventData.location) {
       calendarEvent.location = eventData.location;
     }
 
-    // attendees if any
     if (eventData.attendees && eventData.attendees.length > 0) {
       calendarEvent.attendees = eventData.attendees.map((email) => ({ email }));
     }
 
-    // COLOR mapping (UI color -> Google colorId)
     const colorId = mapUiColorToGoogleColorId(eventData.color);
     if (colorId) {
       calendarEvent.colorId = colorId;
     }
 
-    // REMINDERS
-    // If user picked a reminder time in minutes, prefer that as popup.
-    // We'll include only popup if user gave one, otherwise fallback to default 10/30 duo.
+    // Reminders
     if (eventData.reminder_minutes && !isNaN(eventData.reminder_minutes)) {
       const mins = parseInt(eventData.reminder_minutes, 10);
 
       calendarEvent.reminders = {
         useDefault: false,
-        overrides: [
-          { method: 'popup', minutes: mins }
-        ]
+        overrides: [{ method: 'popup', minutes: mins }]
       };
     } else {
-      // fallback (what we had before)
       calendarEvent.reminders = {
         useDefault: false,
         overrides: [
@@ -447,7 +442,6 @@ async function createCalendarEvent(accessToken, eventData) {
 
     log('Formatted calendar event:', calendarEvent);
 
-    // send to Google Calendar
     const response = await fetch(
       'https://www.googleapis.com/calendar/v3/calendars/primary/events',
       {
@@ -521,7 +515,6 @@ function formatForCalendar(d) {
 function buildIsoDateTime(dateStr, timeStr, year) {
   if (!dateStr || !timeStr) return null;
 
-  // Combine date, year, and time for better parsing
   const combined = `${dateStr} ${year || new Date().getFullYear()} ${timeStr}`;
 
   const parsed = anyDateParser.attempt(combined);
@@ -559,9 +552,6 @@ function createGoogleCalendarUrl(eventDetails) {
 
 /* =========================================================
    LLM PARSING
-   parseEventDetails(text):
-   - ask LanguageModel to extract fields
-   - clean JSON
 ========================================================= */
 
 async function parseEventDetails(text) {
@@ -570,33 +560,39 @@ async function parseEventDetails(text) {
     topK: 1.0
   });
 
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentDateString = now.toLocaleDateString();
+
   let prompt = `
     The following text describes an event.
     Extract the following fields from the user’s message:
     - title
-    - start_date (format: DD MMM, e.g. "30 Oct"; remove ordinal suffixes like st/nd/rd/th)
-    - end_date (same format)
-    - start_time (24-hour format, e.g. "18:00")
-    - end_time (24-hour format, e.g. "19:00")
+    - start_date (format: "30 Oct" or "30 October")
+    - end_date (same format, optional)
+    - start_time (keep whatever time expression user used, e.g. "6 PM", "18:00")
+    - end_time (optional)
     - year (use current year if not given)
-    -location
-    Output a valid JSON object. 
+    - location
+    - description
+    Output a valid JSON object.
 
-    * If no year is provided, use the current year ${new Date().getFullYear()}.
-    * If no date is provided, use the current date ${new Date().toLocaleDateString()}.
-    * If no timezone is provided, leave it empty.
-    * If no end time is provided, set the end time to one hour after the start time
-    * Do not convert the start time or end time
+    * If no year is provided, use the current year ${currentYear}.
+    * If no date is provided, use the current date ${currentDateString}.
+    * If no end time is provided, leave it blank.
+    * Do not invent attendees.
+    * Keep field names exactly as requested.
 
-    Here is the text:
-
-     ${text}`;
+    Text:
+    ${text}
+  `;
 
   const result = await session.prompt(prompt);
-  return JSON.parse(fixCommonJSONMistakes(result), null, '  ');
+  const cleaned = fixCommonJSONMistakes(result);
+  return JSON.parse(cleaned);
 }
 
-// helpers for cleaning model JSON
+// shared JSON cleaning helpers
 function addCommaBetweenQuotes(str) {
   return str.replace(/"([^"]*)"\s+"([^"]*)"/g, '"$1", "$2"');
 }
@@ -625,7 +621,44 @@ function curlyToBrackets(str) {
 function fixCommonJSONMistakes(str) {
   str = str.trim();
   str = curlyToBrackets(str);
-  str = extractTextBetweenCurlyBraces(str);
+  str = extractTextBetweenCurlyBraces(str) || str;
   str = addCommaBetweenQuotes(str);
   return str;
+}
+
+/* =========================================================
+   NORMALIZATION HELPER
+   turns raw LLM output into what content.js expects
+========================================================= */
+function normalizeParsedEvent(rawEvent) {
+  // rawEvent fields expected:
+  // title, start_date, end_date, start_time, end_time, year, location, description
+  const title = rawEvent?.title || 'Untitled event';
+  const year = rawEvent?.year || new Date().getFullYear();
+
+  // build ISO start
+  const startIso = buildIsoDateTime(
+    rawEvent?.start_date,
+    rawEvent?.start_time,
+    year
+  );
+
+  // build ISO end (maybe same day)
+  const endIsoCandidate = buildIsoDateTime(
+    rawEvent?.end_date || rawEvent?.start_date,
+    rawEvent?.end_time,
+    year
+  );
+  const endIso = endIsoCandidate || (startIso ? addOneHourIso(startIso) : null);
+
+  return {
+    title,
+    start_time: startIso,
+    end_time: endIso,
+    description: (rawEvent?.description || title).trim(),
+    location: rawEvent?.location || null,
+    color: 'default',
+    // sensible default for edit form
+    reminder_minutes: 1440
+  };
 }
