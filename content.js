@@ -7,6 +7,7 @@ let snackbarContainer = null;
 let outsideClickHandler = null;
 let colorDropdownOpen = false;
 let reminderDropdownOpen = false;
+let serviceEnabled = true; // tracks if extension is enabled
 
 /* ------------------------------------------------------------------
    THEME  (popup-style)
@@ -54,6 +55,43 @@ function log(msg, data = null) {
   }
 }
 console.log(">>> CONTENT.JS ATTACHED <<<", window.location.href);
+
+function initServiceStatus() {
+  // Don't throw errors if background script isn't ready yet
+  // Just default to enabled and update when background responds
+  if (!chrome.runtime?.id) {
+    // Extension context is invalid
+    serviceEnabled = true;
+    return;
+  }
+
+  try {
+    chrome.runtime.sendMessage({ action: "getServiceStatus" }, (resp) => {
+      // Silently handle connection errors during initialization
+      if (chrome.runtime.lastError) {
+        // Background might not be ready yet, default to enabled
+        serviceEnabled = true;
+        return;
+      }
+      if (resp && typeof resp.enabled === 'boolean') {
+        serviceEnabled = resp.enabled;
+        log("Service status initialized", { serviceEnabled });
+      }
+    });
+  } catch (err) {
+    // Silently default to enabled if something goes wrong
+    serviceEnabled = true;
+  }
+}
+
+// Initialize service status when script loads
+// Use a small delay to give background script time to load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initServiceStatus);
+} else {
+  // DOM already loaded, check status after a brief delay
+  setTimeout(initServiceStatus, 100);
+}
 
 /* ------------------------------------------------------------------
    SNACKBAR
@@ -189,7 +227,18 @@ function showSnackbar(message, type = "info", persist = false) {
    RUNTIME MESSAGE HANDLER
 ------------------------------------------------------------------ */
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request?.action === "createEvent" && typeof request.text === "string") {
+  if (request?.action === "serviceStatus") {
+    // Handle service status updates from background
+    serviceEnabled = request.enabled === true;
+    log("Service status updated", { serviceEnabled });
+
+    // If service was disabled and popup is showing, close it
+    if (!serviceEnabled && eventCreatorContainer) {
+      destroyPopup();
+    }
+
+    sendResponse({ success: true });
+  } else if (request?.action === "createEvent" && typeof request.text === "string") {
     showEventCreator(request.text);
     sendResponse({ success: true });
   } else if (request?.action === "getSelectedText") {
@@ -213,6 +262,11 @@ document.addEventListener("mouseup", (e) => {
   window.lastMouseY = e.clientY;
 
   if (eventCreatorContainer && eventCreatorContainer.contains(e.target)) {
+    return;
+  }
+
+  // Check if service is enabled before showing popup
+  if (!serviceEnabled) {
     return;
   }
 
