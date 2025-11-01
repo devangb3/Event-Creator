@@ -1,85 +1,181 @@
-Gemini Event Creator - Chrome Extension
+# Gemini Event Creator – Chrome Extension
 
-A lightweight Chrome extension that allows you to select text on any webpage and quickly create Google Calendar events using intelligent text parsing.
+Turn any text on the web into a Google Calendar event in a couple of clicks.  
+**Highlight → Parse (Gemini) → Create event.**
 
-## Documentation
+This extension injects a small, glassy popup in the bottom-right of the page (similar to Grammarly). When you highlight something that looks like an event, it offers **Quick Create** or **Edit & Create** and talks to Google Calendar through OAuth.
 
-- [Privacy Policy](https://devangb3.github.io/Event-Creator/PRIVACY)
-- [License](LICENSE)
+---
 
-Features
-	•	Text Selection: Right-click on any selected text to create calendar events
-	•	Smart Parsing: Automatically extracts event details (date, time, location) from text
-	•	Google Calendar Integration: One-click calendar event creation
-	•	Inline UI: Appears as an overlay directly on the webpage (like Grammarly)
-	•	Lightweight: No external dependencies, pure vanilla JavaScript
+## Table of Contents
 
-Quick Start
+1. [Overview](#overview)
+2. [Features](#features)
+3. [Architecture](#architecture)
+4. [Prerequisites](#prerequisites)
+5. [Setup & Installation](#setup--installation)
+6. [Google OAuth (Calendar)](#google-oauth-calendar)
+7. [How It Works (User Flow)](#how-it-works-user-flow)
+8. [Build & Load in Chrome](#build--load-in-chrome)
+9. [Troubleshooting](#troubleshooting)
+10. [Permissions](#permissions)
+11. [Future Enhancements](#future-enhancements)
+12. [Contributors](#contributors)
+13. [Links](#links)
+14. [License](#license)
 
-1. Get Gemini API Key
-	1.	Go to Google AI Studio
-	2.	Create a new API key
-	3.	Copy the API key for configuration
+---
 
-2. Configure API Key
+## Overview
 
-The extension will work with fallback parsing, but for AI-powered event extraction:
+**Gemini Event Creator** is a Chrome extension that:
 
-Using Environment Variables (Recommended)
-	•	Create a .env file in the project root
-	•	Add your API key: GEMINI_API_KEY=your_actual_api_key_here
-	•	The API key will be built into the extension during the build process
+- Listens for **text selection** on web pages
+- Sends that text to the **background script**
+- (Optionally) uses **Google Gemini** to extract event details
+- Creates a **Google Calendar event** for the logged-in user
 
-3. Set up Google OAuth (Calendar access)
+The goal is to remove the “copy → open Calendar → paste → fix date → save” loop and let you do it inline.
 
-The extension needs permission to prefill Google Calendar on behalf of the signed-in user. You must create OAuth credentials for your specific extension ID.
+---
 
-Step 3.1: Create a Google Cloud project
-	1.	Go to Google Cloud Console → “Select a project” → “New Project”.
-	2.	Give it any name (e.g. gemini-event-creator) and create it.
-	3.	Make sure this project is selected in the top bar.
+## Features
 
-Step 3.2: Enable the required API
-	1.	In the left sidebar, go to APIs & Services → Library.
-	2.	Search for Google Calendar API.
-	3.	Click it, then click Enable.
+- ✅ **Text selection → popup**: highlight any text and get a “Create calendar event” card
+- 🤖 **Smart parsing with Gemini**: extract title, date, time, and location from natural language
+- 📅 **Google Calendar integration**: creates events with your own Google account
+- ✏️ **Edit before create**: change title/time/location/color/reminder in a small form
+- 🟣 **Inline UI**: glassmorphism, bottom-right position, consistent with popup.html style
+- 🪶 **Lightweight**: pure JS; no React, no heavy UI frameworks
+- 🧱 **MV3-friendly**: background is a service worker
+- 🛟 **Fallback**: if no API key / parsing fails, it can still build a basic event
 
-Step 3.3: Configure the OAuth consent screen
-	1.	Go to APIs & Services → OAuth consent screen.
-	2.	Choose External.
-	3.	App name can be something like “Gemini Event Creator”.
-	4.	Add your email under “User support email”.
-	5.	Under “Authorized domains”, add chrome-extension:// is not required here (you don’t host a web domain), you can skip domain add.
-	6.	Scroll down to “Scopes”. Add this scope:
-	•	https://www.googleapis.com/auth/calendar.events
-(This lets us prefill calendar event data.)
-	7.	In “Test users”, add the Google accounts you’ll use to test the extension.
-Only these accounts will be allowed during development.
+---
 
-Save.
+## Architecture
 
-Step 3.4: Create OAuth credentials for your Chrome extension
-	1.	Go to APIs & Services → Credentials.
-	2.	Click Create Credentials → OAuth client ID.
-	3.	For “Application type”, select Chrome extension.
-	4.	It will ask for your extension ID.
-	•	To get your extension ID:
-	•	Go to chrome://extensions
-	•	Turn on Developer mode
-	•	Load your unpacked extension (either from dist/ or from source during development)
-	•	Copy the Extension ID shown under the extension name.
-	5.	Paste that Extension ID into Google Cloud.
-	6.	Click Create.
+**Files:**
 
-You’ll now get a client_id that looks like:
-1234567890-abcxyz123.apps.googleusercontent.com
+- **`content.js`**
+  - Runs on web pages
+  - Detects selection
+  - Shows floating UI (quick + edit)
+  - Sends messages to background:
+    - `analyzeText`
+    - `parseTextToEvent`
+    - `createEventFromData`
 
-Copy this client_id.
+- **`background.js`**
+  - MV3 service worker
+  - Receives messages from content
+  - Gets Google OAuth token via `chrome.identity`
+  - Calls **Gemini** (if key is present, injected via Vite)
+  - Calls **Google Calendar API** to create the event
+  - Returns success/failure to content
 
-Step 3.5: Add OAuth info to your manifest.json
+- **`popup.html` / `popup.js`**
+  - UI in extension popup
+  - Shows “How to use”
+  - On/off toggle
+  - Styled to match the glassy on-page card
 
-In your extension manifest.json, add:
+- **`vite.config.js`**
+  - Builds multiple entry points (`background.js`, `content.js`, `popup.js`, `auth.js`)
+  - Injects `process.env.GEMINI_API_KEY` at build time
+  - Can be extended to copy `icons/` into `dist/`
 
+---
+
+## Prerequisites
+
+- Node.js (latest LTS recommended)
+- npm
+- A **Google Gemini API key** (for AI-powered parsing)
+- A **Google Cloud project** with **Google Calendar API** enabled
+- A **Chrome extension ID** (you get this when you load the unpacked build)
+
+---
+
+## Setup & Installation
+
+### 1. Clone & install
+
+```bash
+git clone https://github.com/<your-org-or-username>/Event-Creator.git
+cd Event-Creator
+npm install
+```
+
+### 2. Add your Gemini API key
+
+Create a `.env` file in the project root:
+
+```
+GEMINI_API_KEY=your_actual_api_key_here
+```
+
+Your `vite.config.js` should already contain something like:
+
+```js
+import { defineConfig, loadEnv } from 'vite';
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  return {
+    build: {
+      outDir: 'dist',
+      rollupOptions: {
+        input: {
+          background: 'background.js',
+          content: 'content.js',
+          auth: 'auth.js',
+          popup: 'popup.js'
+        }
+      },
+      define: {
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+      }
+    }
+  };
+});
+```
+
+---
+
+## Google OAuth (Calendar)
+
+To actually create a Google Calendar event for the user, you need OAuth. Here’s the minimal flow.
+
+### Step-by-step
+
+1. **Create a Google Cloud project**
+    - Go to Google Cloud Console
+    - Click "Select a project" → "New project"
+    - Name it e.g. `gemini-event-creator`
+    - Create & select it
+
+2. **Enable Calendar API**
+    - APIs & Services → Library
+    - Search **Google Calendar API**
+    - Click Enable
+
+3. **Configure OAuth consent screen**
+    - User type: External
+    - App name: Gemini Event Creator
+    - Add your email
+    - Scopes:  
+      `https://www.googleapis.com/auth/calendar.events`
+    - Test users: Add your Google accounts
+    - Save
+
+4. **Create OAuth credentials**
+    - Type: Chrome extension
+    - Add your extension ID from `chrome://extensions`
+    - Get client ID like: `1234567890-abcxyz123.apps.googleusercontent.com`
+
+5. **Add to manifest.json**
+
+```json
 "oauth2": {
   "client_id": "YOUR_CLIENT_ID_HERE.apps.googleusercontent.com",
   "scopes": [
@@ -92,77 +188,134 @@ In your extension manifest.json, add:
   "activeTab",
   "scripting",
   "tabs"
+],
+"background": {
+  "service_worker": "background.js"
+}
+```
+
+---
+
+## How It Works (User Flow)
+
+1. Highlight a text like:  
+   _“Team sync on Friday at 10am in Walker Hall”_
+2. `content.js` shows the floating card: Quick Create / Edit & Create
+3. **Quick Create** → Sends message:
+
+```js
+chrome.runtime.sendMessage({ action: "analyzeText", text })
+```
+
+4. **Background handles it**:
+   - Gets OAuth token
+   - Optionally calls Gemini (if key present)
+   - Creates Calendar event
+   - Sends result back (snackbar → “Event created”)
+
+5. **Edit & Create** → Sends:
+
+```js
+chrome.runtime.sendMessage({ action: "parseTextToEvent", text })
+```
+
+   - Shows editable form (title, time, location, etc.)
+   - On submit → creates event
+
+---
+
+## Build & Load in Chrome
+
+```bash
+npm run build
+```
+
+- Output in `dist/`
+
+### Load in Chrome
+
+1. Go to `chrome://extensions/`
+2. Turn on Developer mode
+3. Click "Load unpacked"
+4. Select `dist/` folder
+
+---
+
+## Troubleshooting
+
+- **Extension Not Loading**
+  - Load `dist/`, not root
+  - Rebuild → `npm run build`
+
+- **Popup Not Appearing**
+  - Some sites block extensions (e.g., Chrome Web Store)
+  - Open DevTools → Console: should show `>>> CONTENT.JS ATTACHED <<<`
+
+- **OAuth Issues**
+  - Ensure extension ID in Google Cloud matches real one
+  - Add your Google account as test user
+
+- **Background Not Responding**
+  - MV3 service worker may be asleep
+  - Trigger again by selecting text
+  - Check logs in “service worker” console
+
+---
+
+## Permissions
+
+```json
+"permissions": [
+  "storage",
+  "activeTab",
+  "scripting",
+  "tabs",
+  "identity"
+],
+"host_permissions": [
+  "<all_urls>"
 ]
+```
 
-Notes:
-	•	"identity" is required so the extension can call chrome.identity.getAuthToken(...).
-	•	"tabs" is used to open the new Google Calendar tab after event parsing.
+**Google scope used:**  
+`https://www.googleapis.com/auth/calendar.events`
 
-Your manifest must still include "background": { "service_worker": "background.js" } because this is an MV3 service worker extension, and all OAuth + parsing happens there.
+---
 
-After adding this:
-	•	Reload the extension in chrome://extensions
-	•	On first use, the extension will ask you to sign in. That login result is cached, and on future highlights we try to reuse the token silently.
+## Future Enhancements
 
-4. Build the Extension
+- 🔁 Recurring events (RRULE)
+- 🗓️ Calendar selector (primary/others)
+- 🌐 Outlook / iCloud support
+- 📦 Event templates
+- ⚠️ Conflict detection
+- 📜 Activity log in popup
 
-npm run build
+---
 
-5. Load in Chrome
-	1.	Open Chrome and go to chrome://extensions/
-	2.	Enable “Developer mode” (top right toggle)
-	3.	Click “Load unpacked”
-	4.	Select the dist folder
-	5.	Extension is ready to use!
+## Contributors
 
-How to Use
-	1.	Highlight Text: Simply highlight any text on a webpage that contains event information
-	•	Example: “Meeting tomorrow at 3 PM in conference room A”
-	•	Example: “Team lunch on Friday at noon”
-	2.	Automatic Popup: The event creator popup will automatically appear when you highlight text
-	3.	Create Event: Click “Create Event” to process the highlighted text
-	4.	Add to Calendar: Click “Add to Google Calendar” to add the event to your calendar
+| Name                  | Email                           |
+|-----------------------|----------------------------------|
+| Prasannadatta Kawadkar | prasannadatta2k23@gmail.com     |
+| Devang Borkar         | devangborkar3@gmail.com         |
+| Leeha Rachabattuni    | lrachabattuni@ucdavis.edu       |
+| Hetvi Bhadani         | hbhadani@ucdavis.edu            |
 
-Note: The popup will automatically disappear when you click elsewhere or deselect the text.
+GitHub handles (optional):
 
-Building
+- @prasannadatta-k
+- @devangb3
 
-npm run build
+---
 
-The built files will be in the dist/ directory.
+## Links
 
-Troubleshooting
+- **Privacy Policy**: [https://devangb3.github.io/Event-Creator/PRIVACY](https://devangb3.github.io/Event-Creator/PRIVACY)
+- **License**: [LICENSE](LICENSE)
 
-Extension Not Loading
-	•	Make sure you’re loading the dist/ folder, not the project root
-	•	Check that “Developer mode” is enabled in chrome://extensions/
-	•	Try refreshing the extension after rebuilding
+---
 
-Popup Not Appearing
-	•	Make sure you’re highlighting text (not just clicking)
-	•	Check the browser console for error messages
-	•	Ensure the content script is loading (check console logs)
-	•	Try refreshing the webpage
-	•	The popup appears automatically when text is selected - no right-click needed
+## License
 
-OAuth keeps asking every time or doesn’t work
-	•	Make sure the client_id in your manifest.json matches the extension ID you actually loaded in chrome://extensions
-	•	Make sure the Google account you’re testing with is added under “Test users” in the OAuth consent screen in Google Cloud
-	•	If background never logs anything in the service worker console, it means the worker crashed before startup — usually caused by missing auth.js / services/geminiService.js
-
-Permissions
-
-The extension requests the following permissions:
-	•	storage: For saving preferences (if needed in future)
-	•	activeTab: To access the current tab
-	•	scripting: To inject content scripts for text selection detection
-	•	host_permissions: To run on all websites
-	•	identity: For Google OAuth via chrome.identity
-	•	tabs: To open Google Calendar with a pre-filled event
-
-Future Enhancements
-	•	Support for recurring events
-	•	Event templates and quick actions
-	•	Multiple calendar providers
-	•	Event conflict detection
-	•	Team event coordination
+This project is licensed under the terms described in the `LICENSE` file in this repository.
