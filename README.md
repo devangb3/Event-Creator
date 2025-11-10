@@ -302,11 +302,6 @@ npm run build
 | Leeha Rachabattuni    | lrachabattuni@ucdavis.edu       |
 | Hetvi Bhadani         | hbhadani@ucdavis.edu            |
 
-GitHub handles (optional):
-
-- @prasannadatta-k
-- @devangb3
-
 ---
 
 ## Links
